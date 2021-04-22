@@ -1,6 +1,6 @@
 /**
  * StGLWidgets, small C++ toolkit for writing GUI using OpenGL.
- * Copyright © 2010-2019 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2010-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * Distributed under the Boost Software License, Version 1.0.
  * See accompanying file license-boost.txt or copy at
@@ -203,8 +203,10 @@ namespace {
 
     // we use negative scale factor to show sphere inside out!
     static const float THE_SPHERE_RADIUS     = -10.0f;
-    static const float THE_PANORAMA_DEF_ZOOM = 0.45f;
+    static const float THE_PANORAMA_DEF_ZOOM = 0.45f; // circa 85 degrees FOV
 
+    static const float THE_THEATER_ANGLE = float(M_PI * 0.5);
+    static const float THE_THEATER_FROM  = float(M_PI) - THE_THEATER_ANGLE * 0.5f;
 }
 
 StGLImageRegion::StGLImageRegion(StGLWidget* theParent,
@@ -213,9 +215,12 @@ StGLImageRegion::StGLImageRegion(StGLWidget* theParent,
 : StGLWidget(theParent, 0, 0, StGLCorner(ST_VCORNER_TOP, ST_HCORNER_LEFT)),
   myIconPrev(NULL),
   myIconNext(NULL),
+  myCube(GL_TRIANGLES),
+  myCubePano(StPanorama_OFF),
   myUVSphere  (StGLVec3(0.0f, 0.0f, 0.0f), 1.0f, 64, false),
   myHemisphere(StGLVec3(0.0f, 0.0f, 0.0f), 1.0f, 64, true),
   myCylinder  (StGLVec3(0.0f, 0.0f, 0.0f), 1.0f, 1.0f, 64),
+  myTheater   (StGLVec3(0.0f, 0.0f, 0.0f), 1.0f, 1.0f, THE_THEATER_FROM, THE_THEATER_FROM + THE_THEATER_ANGLE, 64),
   myTextureQueue(theTextureQueue),
   myClickPntZo(0.0, 0.0),
   myKeyFlags(ST_VF_NONE),
@@ -405,9 +410,11 @@ StGLImageRegion::~StGLImageRegion() {
     StGLContext& aCtx = getContext();
     myTextureQueue->getQTexture().release(aCtx);
     myQuad.release(aCtx);
+    myCube.release(aCtx);
     myUVSphere.release(aCtx);
     myHemisphere.release(aCtx);
     myCylinder.release(aCtx);
+    myTheater.release(aCtx);
     myProgram.release(aCtx);
 
     // simplify debugging - nullify pointer to this widget
@@ -459,6 +466,11 @@ bool StGLImageRegion::stglInit() {
         ST_ERROR_LOG("Fail to init StGLUVSphere");
     }*/
 
+    // a unit cube for cubemap rendering
+    if(!stglInitCube()) {
+        return false;
+    }
+
     // setup texture filter
     myTextureQueue->getQTexture().setMinMagFilter(aCtx,
                                                   params.TextureFilter->getValue() == StGLImageProgram::FILTER_NEAREST
@@ -466,6 +478,164 @@ bool StGLImageRegion::stglInit() {
 
     myIsInitialized = true;
     return myIsInitialized && isInit;
+}
+
+/**
+ * Cubemap sides.
+ */
+enum StCubeSide {
+    StCubeSide_PX = 0,
+    StCubeSide_NX,
+    StCubeSide_PY,
+    StCubeSide_NY,
+    StCubeSide_PZ,
+    StCubeSide_NZ,
+};
+typedef StVec4<int> StIVec4;
+
+bool StGLImageRegion::stglInitCube(const StGLVec4& theClamp,
+                                   const StPanorama thePano) {
+    myCubeClamp = theClamp;
+    myCubePano = thePano;
+
+    // a unit cube for cubemap rendering
+    const StGLVec3 THE_VERTS[8] = {
+        StGLVec3(-1.0f,-1.0f, 1.0f),
+        StGLVec3( 1.0f,-1.0f, 1.0f),
+        StGLVec3(-1.0f, 1.0f, 1.0f),
+        StGLVec3( 1.0f, 1.0f, 1.0f),
+        StGLVec3(-1.0f,-1.0f,-1.0f),
+        StGLVec3( 1.0f,-1.0f,-1.0f),
+        StGLVec3(-1.0f, 1.0f,-1.0f),
+        StGLVec3( 1.0f, 1.0f,-1.0f)
+    };
+
+    const StIVec4 THE_SIDES[6] = {
+        StIVec4(3, 7, 5, 1), // px
+        StIVec4(6, 2, 0, 4), // nx
+        StIVec4(2, 3, 7, 6), // py
+        StIVec4(0, 1, 5, 4), // ny
+        StIVec4(0, 1, 3, 2), // pz
+        StIVec4(5, 4, 6, 7), // nz
+    };
+
+    StArrayList<StGLVec3>& aVertArr  = myCube.changeVertices();
+    StArrayList<StGLVec3>& aCoordArr = myCube.changeNormals();
+    StArrayList<StGLVec4>& aClampArr = myCube.changeColors();
+    aVertArr.initArray(6 * 6);
+    aCoordArr.initArray(aVertArr.size());
+    aClampArr.initArray(aVertArr.size());
+    int aVert = 0;
+    for(int aSideIter = 0; aSideIter < 6; ++aSideIter, aVert += 6) {
+        StIVec4 aSide = THE_SIDES[aSideIter];
+        aVertArr[aVert + 0] = THE_VERTS[aSide[0]];
+        aVertArr[aVert + 1] = THE_VERTS[aSide[1]];
+        aVertArr[aVert + 2] = THE_VERTS[aSide[2]];
+
+        aVertArr[aVert + 3] = THE_VERTS[aSide[0]];
+        aVertArr[aVert + 4] = THE_VERTS[aSide[2]];
+        aVertArr[aVert + 5] = THE_VERTS[aSide[3]];
+
+        // rotate EAC cube sides
+        if(thePano == StPanorama_Cubemap3_2ytb) {
+            if(aSideIter == StCubeSide_NY) {
+                const StIVec4 aCopy = aSide;
+                for(int aSubIter = 0; aSubIter < 4; ++aSubIter) {
+                    aSide[aSubIter] = aCopy[aSubIter > 0 ? aSubIter - 1 : 3];
+                }
+            }
+            if(aSideIter == StCubeSide_NZ || aSideIter == StCubeSide_PY) {
+                const StIVec4 aCopy = aSide;
+                for(int aSubIter = 0; aSubIter < 4; ++aSubIter) {
+                    aSide[aSubIter] = aCopy[aSubIter < 3 ? aSubIter + 1 : 0];
+                }
+            }
+        } else if(thePano == StPanorama_Cubemap2_3ytb) {
+            if(aSideIter == StCubeSide_PX
+            || aSideIter == StCubeSide_NX) {
+                const StIVec4 aCopy = aSide;
+                for(int aSubIter = 0; aSubIter < 4; ++aSubIter) {
+                    aSide[aSubIter] = aCopy[aSubIter < 3 ? aSubIter + 1 : 0];
+                }
+            }
+            if(aSideIter == StCubeSide_PZ) {
+                const StIVec4 aCopy = aSide;
+                for(int aSubIter = 0; aSubIter < 4; ++aSubIter) {
+                    aSide[aSubIter] = aCopy[aSubIter > 0 ? aSubIter - 1 : 3];
+                }
+            }
+        }
+
+        aCoordArr[aVert + 0] = THE_VERTS[aSide[0]];
+        aCoordArr[aVert + 1] = THE_VERTS[aSide[1]];
+        aCoordArr[aVert + 2] = THE_VERTS[aSide[2]];
+
+        aCoordArr[aVert + 3] = THE_VERTS[aSide[0]];
+        aCoordArr[aVert + 4] = THE_VERTS[aSide[2]];
+        aCoordArr[aVert + 5] = THE_VERTS[aSide[3]];
+        for(int aSubIter = 0; aSubIter < 6; ++aSubIter) {
+            StGLVec4& aClamp = aClampArr[aVert + aSubIter];
+            aClamp = StGLVec4(0.0f, 0.0f, 0.0f, theClamp.x());
+            switch(aSideIter) {
+                case StCubeSide_PX: {
+                    aClamp.x() = 1.0f;
+                    aClamp.y() = -theClamp.w();
+                    aClamp.z() = -theClamp.z();
+                    break;
+                }
+                case StCubeSide_NX: {
+                    aClamp.x() = -1.0f;
+                    aClamp.y() = -theClamp.w();
+                    aClamp.z() = theClamp.z();
+                    break;
+                }
+                case StCubeSide_PZ: {
+                    aClamp.x() = -theClamp.z();
+                    aClamp.y() = -theClamp.w();
+                    aClamp.z() = 1.0f;
+                    break;
+                }
+                case StCubeSide_NZ: {
+                    aClamp.x() = theClamp.z();
+                    aClamp.y() = -theClamp.w();
+                    aClamp.z() = -1.0f;
+                    break;
+                }
+                case StCubeSide_PY: {
+                    aClamp.x() = theClamp.z();
+                    aClamp.y() = 1.0f;
+                    aClamp.z() = theClamp.w();
+                    break;
+                }
+                case StCubeSide_NY: {
+                    aClamp.x() = theClamp.z();
+                    aClamp.y() = -1.0f;
+                    aClamp.z() = -theClamp.w();
+                    break;
+                }
+            }
+        }
+    }
+
+    // triangle strip initialization
+    /*aCubeVerts.initArray(8);
+    for(int aVertIter = 0; aVertIter < 8; ++aVertIter) {
+      aCubeVerts[aVertIter] = THE_VERTS[aVertIter];
+    }
+    const GLuint THE_BOX_TRISTRIP[14] = { 0, 1, 2, 3, 7, 1, 5, 4, 7, 6, 2, 4, 0, 1 };
+    StArrayList<GLuint>& aCubeInd = myCube.changeIndices();
+    aCubeInd.initArray(14);
+    for(unsigned int aVertIter = 0; aVertIter < 14; ++aVertIter) {
+        aCubeInd[aVertIter] = THE_BOX_TRISTRIP[aVertIter];
+    }*/
+
+    StGLContext& aCtx = getContext();
+    if(!myCube.initVBOs(aCtx)) {
+        aCtx.pushError(StString("Fail to init Cube Mesh"));
+        ST_ERROR_LOG("Fail to init Cube Mesh");
+        return false;
+    }
+    return true;
 }
 
 StGLVec2 StGLImageRegion::getMouseMoveFlat(const StPointD_t& theCursorZoFrom,
@@ -510,6 +680,9 @@ bool StGLImageRegion::getHeadOrientation(StGLQuaternion& theOrient,
     float aYaw   = -stToRadians(aParams->getPanYaw() + aMouseMove.x()) + aYawShift;
     float aPitch =  stToRadians(StStereoParams::clipPitch(aParams->getPanPitch() + aMouseMove.y()));
     float aRoll  =  stToRadians(aParams->getZRotate());
+    if(myProjCam.isCustomProjection()) {
+        aPitch = 0.0f; // ignore pitch for HMD
+    }
 
     // apply separation
     const float aSepDeltaX = GLfloat(aParams->getSeparationDx()) * 0.05f;
@@ -617,13 +790,10 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
         }
     }
 
-    // setup scissor box
-    StGLBoxPx aScissorBox;
-    const StRectI_t aFrameRectAbs = getAbsolute(aFrameRectPx);
-    getRoot()->stglScissorRect(aFrameRectAbs, aScissorBox);
-    aCtx.stglSetScissorRect(aScissorBox, true);
-    aCtx.stglResizeViewport(aScissorBox);
+    // set 85 degrees FOV as 1.0x zoom for panorama rendering
+    myProjCam = *getCamera();
     myProjCam.resize(aCameraAspect);
+    myProjCam.setFOVy(85.0f);
 
     aCtx.core20fwd->glDisable(GL_BLEND);
 
@@ -637,7 +807,7 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
                             GLfloat(aTextures.getPlane(3).getSizeY()));
     StGLMatrix aModelMat;
     // data rectangle in the texture
-    StGLVec4 aClampVec, aClampUV, aClampA;
+    StGLVec4 aClampVec(0.0f, 0.0f, 1.0f, 1.0f), aClampUV(0.0f, 0.0f, 1.0f, 1.0f), aClampA(0.0f, 0.0f, 1.0f, 1.0f);
     if(params.TextureFilter->getValue() == StGLImageProgram::FILTER_NEAREST) {
         myTextureQueue->getQTexture().setMinMagFilter(aCtx, GL_NEAREST);
         //
@@ -661,26 +831,43 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
         } else {
             myTextureQueue->getQTexture().setMinMagFilter(aCtx, GL_LINEAR);
         }
-        //
-        aClampVec.x() = 0.5f / aTextureSize.x();
-        aClampVec.y() = 0.5f / aTextureSize.y();
-        aClampVec.z() = aTextures.getPlane(0).getDataSize().x() - 2.0f * aClampVec.x();
-        aClampVec.w() = aTextures.getPlane(0).getDataSize().y() - 2.0f * aClampVec.y();
+
+        // clamping is undesired for full-range cubemap to allow smooth seamless cube boundaries,
+        // but EAC video normally defines non-square cube sides requiring clamping
+        const bool isCubemapFull = aTextures.getPlane().getTarget() == GL_TEXTURE_CUBE_MAP
+                                && aTextures.getPlane().getPackedPanorama() != StPanorama_Cubemap3_2ytb
+                                && aTextures.getPlane().getPackedPanorama() != StPanorama_Cubemap2_3ytb;
+        if(!isCubemapFull
+         || aTextures.getPlane(0).getDataSize().x() != aTextures.getPlane(0).getDataSize().y()
+         || aTextures.getPlane(0).getDataSize().x() != 1.0f) {
+            aClampVec.x() = 0.5f / aTextureSize.x();
+            aClampVec.y() = 0.5f / aTextureSize.y();
+            aClampVec.z() = aTextures.getPlane(0).getDataSize().x() - 2.0f * aClampVec.x();
+            aClampVec.w() = aTextures.getPlane(0).getDataSize().y() - 2.0f * aClampVec.y();
+        }
         // UV
         if(aTextureUVSize.x() > 0.0f
         && aTextureUVSize.y() > 0.0f) {
-            aClampUV.x() = 0.5f / aTextureUVSize.x();
-            aClampUV.y() = 0.5f / aTextureUVSize.y(),
-            aClampUV.z() = aTextures.getPlane(1).getDataSize().x() - 2.0f * aClampUV.x();
-            aClampUV.w() = aTextures.getPlane(1).getDataSize().y() - 2.0f * aClampUV.y();
+            if(!isCubemapFull
+             || aTextures.getPlane(1).getDataSize().x() != aTextures.getPlane(1).getDataSize().y()
+             || aTextures.getPlane(1).getDataSize().x() != 1.0f) {
+                aClampUV.x() = 0.5f / aTextureUVSize.x();
+                aClampUV.y() = 0.5f / aTextureUVSize.y(),
+                aClampUV.z() = aTextures.getPlane(1).getDataSize().x() - 2.0f * aClampUV.x();
+                aClampUV.w() = aTextures.getPlane(1).getDataSize().y() - 2.0f * aClampUV.y();
+            }
         }
         // Alpha
         if(aTextureASize.x() > 0.0f
         && aTextureASize.y() > 0.0f) {
-            aClampA.x() = 0.5f / aTextureASize.x();
-            aClampA.y() = 0.5f / aTextureASize.y(),
-            aClampA.z() = aTextures.getPlane(3).getDataSize().x() - 2.0f * aClampA.x();
-            aClampA.w() = aTextures.getPlane(3).getDataSize().y() - 2.0f * aClampA.y();
+            if(!isCubemapFull
+             || aTextures.getPlane(3).getDataSize().x() != aTextures.getPlane(3).getDataSize().y()
+             || aTextures.getPlane(3).getDataSize().x() != 1.0f) {
+                aClampA.x() = 0.5f / aTextureASize.x();
+                aClampA.y() = 0.5f / aTextureASize.y(),
+                aClampA.z() = aTextures.getPlane(3).getDataSize().x() - 2.0f * aClampA.x();
+                aClampA.w() = aTextures.getPlane(3).getDataSize().y() - 2.0f * aClampA.y();
+            }
         }
     }
     aTextures.bind(aCtx);
@@ -722,14 +909,28 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
     const GLfloat  aScaleBack = aParams->ScaleFactor;
     const StGLVec2 aPanBack   = aParams->PanCenter;
 
-    const float aVrScale = float(myRoot->getVrZoomOut());
-
     StViewSurface aViewMode = aParams->ViewingMode;
     if(aTextures.getPlane(0).getTarget() == GL_TEXTURE_CUBE_MAP) {
-        aViewMode = StViewSurface_Cubemap;
-    } else if(aViewMode == StViewSurface_Cubemap) {
+        if(aViewMode != StViewSurface_Cubemap && aViewMode != StViewSurface_CubemapEAC) {
+            aViewMode = aTextures.getPlane().getPackedPanorama() == StPanorama_Cubemap3_2ytb
+                     || aTextures.getPlane().getPackedPanorama() == StPanorama_Cubemap2_3ytb
+                      ? StViewSurface_CubemapEAC
+                      : StViewSurface_Cubemap;
+        }
+    } else if(aViewMode == StViewSurface_Cubemap || aViewMode == StViewSurface_CubemapEAC) {
         aViewMode = StViewSurface_Plain;
     }
+
+    // setup scissor box
+    StGLBoxPx aScissorBox;
+    const StRectI_t aFrameRectAbs = getAbsolute(aFrameRectPx);
+    if(aViewMode == StViewSurface_Plain) {
+        getRoot()->stglScissorRect2d(aFrameRectAbs, aScissorBox);
+    } else {
+        getRoot()->stglScissorRect3d(aFrameRectAbs, aScissorBox);
+    }
+    aCtx.stglSetScissorRect(aScissorBox, true);
+    aCtx.stglResizeViewport(aScissorBox);
 
     myFrameSize.x() = int(double(aTextures.getPlane().getDataSize().x()) * double(aTextures.getPlane().getSizeX()));
     myFrameSize.y() = int(double(aTextures.getPlane().getDataSize().y()) * double(aTextures.getPlane().getSizeY()));
@@ -739,6 +940,7 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
     StGLImageProgram::FragGetColor aColorGetter = params.TextureFilter->getValue() == StGLImageProgram::FILTER_BLEND
                                                 ? StGLImageProgram::FragGetColor_Blend
                                                 : StGLImageProgram::FragGetColor_Normal;
+    const bool toDragImageInSwipe = getRectPx().ratio() < 0.75; // drag image only in portrait mode while swiping
     switch(aViewMode) {
         case StViewSurface_Plain: {
             const float aBrightnessBack = params.Brightness->getValue();
@@ -776,27 +978,32 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
                     }
                 } else if(!myList.isNull()) {
                     // previous / next swipe gesture
-                    StPlayList::CurrentPosition aPos = myList->getCurrentPosition();
+                    const double anIntensMult = toDragImageInSwipe ? 1.0 : 3.0;
+                    const StPlayList::CurrentPosition aPos = myList->getCurrentPosition();
                     const double aMouseDX = myClickPntZo.x() - getRoot()->getCursorZo().x();
-                    const float aScaleSteps = (float )stMin(std::abs(aMouseDX), 1.0);
+                    const float aScaleSteps = (float )stMin(std::abs(aMouseDX) * anIntensMult, 1.0);
                     if(aMouseDX < 0.0) {
                         // previous
                         if(aPos == StPlayList::CurrentPosition_Middle
                         || aPos == StPlayList::CurrentPosition_Last) {
                             //params.Brightness->setValue(aBrightnessBack - aScaleSteps);
                             //aParams->scaleIn(-aScaleSteps);
-                            StGLVec2 aVec = getMouseMoveFlat(myClickPntZo, getRoot()->getCursorZo());
-                            aVec.y() = 0.0;
-                            aParams->moveFlat(aVec, float(getRectPx().ratio()));
+                            if(toDragImageInSwipe) {
+                                StGLVec2 aVec = getMouseMoveFlat(myClickPntZo, getRoot()->getCursorZo());
+                                aVec.y() = 0.0;
+                                aParams->moveFlat(aVec, float(getRectPx().ratio()));
+                            }
                             myIconPrev->setOpacity(aScaleSteps, false);
                         }
                     } else {
                         // next
                         if(aPos == StPlayList::CurrentPosition_Middle
                         || aPos == StPlayList::CurrentPosition_First) {
-                            StGLVec2 aVec = getMouseMoveFlat(myClickPntZo, getRoot()->getCursorZo());
-                            aVec.y() = 0.0;
-                            aParams->moveFlat(aVec, float(getRectPx().ratio()));
+                            if(toDragImageInSwipe) {
+                                StGLVec2 aVec = getMouseMoveFlat(myClickPntZo, getRoot()->getCursorZo());
+                                aVec.y() = 0.0;
+                                aParams->moveFlat(aVec, float(getRectPx().ratio()));
+                            }
                             myIconNext->setOpacity(aScaleSteps, false);
                         }
                     }
@@ -806,16 +1013,19 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
                 const double aProgress  = myFadeTimer.getElapsedTimeInMilliSec() / THE_FADE_ANIM_MS;
                 const double aFadeClamp = stMin(1.0, aProgress);
                 const bool isNext = myFadeFrom.x() < myClickPntZo.x();
-                StPointD_t aFadeTo = myFadeFrom;
-                aFadeTo.x() += isNext ? -aFadeClamp : aFadeClamp;
+                if(toDragImageInSwipe) {
+                    StPointD_t aFadeTo = myFadeFrom;
+                    aFadeTo.x() += isNext ? -aFadeClamp : aFadeClamp;
 
-                StGLVec2 aVec = getMouseMoveFlat(myClickPntZo, aFadeTo);
-                aVec.y() = 0.0;
-                aParams->moveFlat(aVec, float(getRectPx().ratio()));
+                    StGLVec2 aVec = getMouseMoveFlat(myClickPntZo, aFadeTo);
+                    aVec.y() = 0.0;
+                    aParams->moveFlat(aVec, float(getRectPx().ratio()));
+                }
                 params.Brightness->setValue(aBrightnessBack - (float )aFadeClamp * 3.0f);
 
                 // animate icon opacity in loop
-                const double anOpacityFrom = stMin(std::abs(myClickPntZo.x() - myFadeFrom.x()), 1.0);
+                const double anIntensMult  = toDragImageInSwipe ? 1.0 : 3.0;
+                const double anOpacityFrom = stMin(std::abs(myClickPntZo.x() - myFadeFrom.x()) * anIntensMult, 1.0);
                 double anIconProgress = anOpacityFrom + aProgress;
                 const bool isEven = (int(anIconProgress) % 2) == 0;
                 anIconProgress -= int(anIconProgress);
@@ -833,6 +1043,7 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
             }
 
             // apply scale
+            const float aVrScale = float(myRoot->getVrZoomOut());
             aModelMat.scale(aParams->ScaleFactor * aVrScale, aParams->ScaleFactor * aVrScale, 1.0f);
 
             // apply position
@@ -929,8 +1140,37 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
             params.Brightness->setValue(aBrightnessBack);
             break;
         }
-        case StViewSurface_Cubemap: {
-            if(!myProgram.init(aCtx, aTextures.getColorModel(), aTextures.getColorScale(), StGLImageProgram::FragGetColor_Cubemap)) {
+        case StViewSurface_Cubemap:
+        case StViewSurface_CubemapEAC: {
+            // Clamping range is passed through vertex attributes.
+            // To avoid extra vertex attributes, the smallest clamping range is used across planes.
+            // This trick is possible, because cubemap texture lazy resizing is not used,
+            // hence all planes should have same proportions.
+            // The result will be broken for rare formats like YUV422P/YUV411P/YUV440P.
+            StGLVec4 aClamVecMin = aClampVec;
+            if(aTextureUVSize.x() > 0.0f
+            && aTextureUVSize.y() > 0.0f) {
+                aClamVecMin.x() = stMax(aClamVecMin.x(), aClampUV.x());
+                aClamVecMin.y() = stMax(aClamVecMin.y(), aClampUV.y());
+                aClamVecMin.z() = stMin(aClamVecMin.z(), aClampUV.z());
+                aClamVecMin.w() = stMin(aClamVecMin.w(), aClampUV.w());
+            }
+            if(aTextureASize.x() > 0.0f
+            && aTextureASize.y() > 0.0f) {
+                aClamVecMin.x() = stMax(aClamVecMin.x(), aClampA.x());
+                aClamVecMin.y() = stMax(aClamVecMin.y(), aClampA.y());
+                aClamVecMin.z() = stMin(aClamVecMin.z(), aClampA.z());
+                aClamVecMin.w() = stMin(aClamVecMin.w(), aClampA.w());
+            }
+
+            if(myCubeClamp != aClamVecMin
+            || myCubePano != aTextures.getPlane().getPackedPanorama()) {
+                stglInitCube(aClamVecMin, aTextures.getPlane().getPackedPanorama());
+            }
+
+            if(!myProgram.init(aCtx, aTextures.getColorModel(), aTextures.getColorScale(),
+                               StGLImageProgram::FragGetColor_Cubemap,
+                               aViewMode == StViewSurface_CubemapEAC ? StGLImageProgram::FragTexEAC_On : StGLImageProgram::FragTexEAC_Off)) {
                 break;
             }
 
@@ -943,22 +1183,34 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
             myProgram.setTextureADataSize   (aCtx, aClampA);
             myProgram.setCubeTextureFlipZ   (aCtx, aParams->ToFlipCubeZ);
 
-            const float aScale = THE_PANORAMA_DEF_ZOOM * aParams->ScaleFactor * aVrScale;
+            const float aScale = aParams->ScaleFactor;
             aModelMat.scale(aScale, aScale, 1.0f);
 
             // compute orientation
             const StGLQuaternion anOri = getHeadOrientation(theView, true);
             aModelMat = StGLMatrix::multiply(aModelMat, StGLMatrix(anOri));
-
-            StGLMatrix aMatModelInv, aMatProjInv;
-            aModelMat.inverted(aMatModelInv);
-            myProjCam.getProjMatrixMono().inverted(aMatProjInv);
-            myProgram.getActiveProgram()->setProjMat (aCtx, StGLMatrix::multiply(aMatModelInv, aMatProjInv));
             myProgram.getActiveProgram()->setModelMat(aCtx, aModelMat);
 
-            ///glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+            if(myProjCam.isCustomProjection()) {
+                myProgram.getActiveProgram()->setProjMat (aCtx, myProjCam.getProjMatrix());
+            } else {
+                myProgram.getActiveProgram()->setProjMat (aCtx, myProjCam.getProjMatrixMono());
+            }
 
-            myQuad.draw(aCtx, *myProgram.getActiveProgram());
+        #if !defined(GL_ES_VERSION_2_0)
+            // Issues with seamless cubemap filtering:
+            // - Desktop, available since OpenGL 3.2+ (or ARB_seamless_cube_map) and DISABLED by default;
+            //   some old implementations might be buggy;
+            //   some very old implementation might even switch to software fallback.
+            // - Mobile, OpenGL ES 3.0 requires cubemap filtering to be always ENABLED - no API for disabling;
+            //   OpenGL ES 3.0 implementations might not support seamless filtering without a way to detect it.
+            // - Seamless filtering works is desired for a proper cubemap definition,
+            //   but undesired for EAC video frames with non-square cube sides and has rotated sides.
+            if(aCtx.isGlGreaterEqual(3, 2)) {
+                ///glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+            }
+        #endif
+            myCube.draw(aCtx, *myProgram.getActiveProgram());
 
             myProgram.getActiveProgram()->unuse(aCtx);
 
@@ -968,13 +1220,13 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
             break;
         }
         case StViewSurface_Cylinder:
+        case StViewSurface_Theater:
         case StViewSurface_Hemisphere:
         case StViewSurface_Sphere: {
             if(!myProgram.init(aCtx, aTextures.getColorModel(), aTextures.getColorScale(), aColorGetter)) {
                 break;
             }
 
-            GLfloat aVertScale = 1.0f;
             StGLMesh* aMesh = &myUVSphere;
             if(aViewMode == StViewSurface_Hemisphere) {
                 aMesh = &myHemisphere;
@@ -982,20 +1234,32 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
                 aMesh = &myCylinder;
                 const StGLVec2 aSrcSize (aTextures.getPlane().getDataSize().x() * (float )aTextures.getPlane().getSizeX(),
                                          aTextures.getPlane().getDataSize().y() * (float )aTextures.getPlane().getSizeY());
-                aVertScale = float(2.0 * M_PI * aSrcSize.y()) / aSrcSize.x();
+                float aCylHeight = float(2.0 * M_PI * aSrcSize.y()) / aSrcSize.x();
                 //aVertScale *= aTextures.getPlane().getDisplayRatio();
+                if(myCylinder.getHeight() != aCylHeight) {
+                    myCylinder.setHeight(aCylHeight);
+                    myCylinder.release(aCtx);
+                }
+            } else if(aViewMode == StViewSurface_Theater) {
+                aMesh = &myTheater;
+                const float aCylWidth = float(M_PI * myTheater.getRadius() / myTheater.getAngle());
+                const float aCylHeight = (aCylWidth / aTextures.getPlane().getDisplayRatio()) * 0.75f;
+                if(myTheater.getHeight() != aCylHeight) {
+                    myTheater.setHeight(aCylHeight);
+                    myTheater.release(aCtx);
+                }
             }
             if(!aMesh->changeVBO(ST_VBO_VERTEX)->isValid()) {
                 if(!aMesh->initVBOs(aCtx)) {
-                    aCtx.pushError(StString("Fail to init StGLUVSphere"));
-                    ST_ERROR_LOG("Fail to init StGLUVSphere");
+                    aCtx.pushError(StString("Fail to init mesh data"));
+                    ST_ERROR_LOG("Fail to init mesh data");
                     break;
                 }
             }
 
             // perform scaling
-            const float aScale = THE_SPHERE_RADIUS * THE_PANORAMA_DEF_ZOOM * aParams->ScaleFactor * aVrScale;
-            aModelMat.scale(aScale, aScale * aVertScale, THE_SPHERE_RADIUS);
+            const float aScale = THE_SPHERE_RADIUS * aParams->ScaleFactor;
+            aModelMat.scale(aScale, aScale, THE_SPHERE_RADIUS);
 
             // compute orientation
             const StGLQuaternion anOri = getHeadOrientation(theView, true);
@@ -1010,8 +1274,12 @@ void StGLImageRegion::stglDrawView(unsigned int theView) {
             myProgram.setTextureUVDataSize  (aCtx, aClampUV);
             myProgram.setTextureADataSize   (aCtx, aClampA);
 
-            myProgram.getActiveProgram()->setProjMat (aCtx, myProjCam.getProjMatrixMono());
             myProgram.getActiveProgram()->setModelMat(aCtx, aModelMat);
+            if(myProjCam.isCustomProjection()) {
+                myProgram.getActiveProgram()->setProjMat (aCtx, myProjCam.getProjMatrix());
+            } else {
+                myProgram.getActiveProgram()->setProjMat (aCtx, myProjCam.getProjMatrixMono());
+            }
 
             aMesh->draw(aCtx, *myProgram.getActiveProgram());
 
@@ -1140,7 +1408,9 @@ bool StGLImageRegion::tryUnClick(const StClickEvent& theEvent,
                 break;
             }
             case StViewSurface_Cubemap:
+            case StViewSurface_CubemapEAC:
             case StViewSurface_Cylinder:
+            case StViewSurface_Theater:
             case StViewSurface_Hemisphere:
             case StViewSurface_Sphere: {
                 aParams->moveSphere(getMouseMoveSphere(myClickPntZo, aCursor));
@@ -1220,7 +1490,9 @@ void StGLImageRegion::scaleAt(const StPointD_t& thePoint,
             break;
         }
         case StViewSurface_Cubemap:
+        case StViewSurface_CubemapEAC:
         case StViewSurface_Cylinder:
+        case StViewSurface_Theater:
         case StViewSurface_Hemisphere:
         case StViewSurface_Sphere: {
             if(theStep < 0.0f

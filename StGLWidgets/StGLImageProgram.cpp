@@ -119,6 +119,46 @@ void StGLImageProgram::registerFragments(const StGLContext& theCtx) {
         "    color = pow(color, uGamma);\n"
         "}\n\n");
 
+    // equiangular cubemap texture coordinates correction
+    registerFragmentShaderPart(FragSection_GetTexCoords, FragTexEAC_Off,
+                               "vec3 getTexCoords(in vec3 theCoords, in vec4 theClamp) { return theCoords; }\n\n");
+    registerFragmentShaderPart(FragSection_GetTexCoords, FragTexEAC_On,
+                               "#define ST_PI 3.1415926535897932384626433832795\n"
+                               "vec3 getTexCoords(in vec3 theCoords, in vec4 theClamp) {\n"
+                               "    vec3 aCoords = theCoords;\n"
+                               "    aCoords.x = 4.0 / ST_PI * atan(theCoords.x);\n"
+                               "    aCoords.y = 4.0 / ST_PI * atan(theCoords.y);\n"
+                               "    aCoords.z = 4.0 / ST_PI * atan(theCoords.z);\n"
+                               "\n"
+                               "    float aClampX = abs(theClamp.x) < 1.0 ? theClamp.w * 2.0 : 0.0;\n"
+                               "    if(theClamp.x >= 0.0) {\n"
+                               "        aCoords.x = -1.0 + theClamp.x * (aCoords.x + 1.0);\n"
+                               "        aCoords.x = clamp(aCoords.x, -1.0 + aClampX, 1.0 * theClamp.x);\n"
+                               "    } else {\n"
+                               "        aCoords.x =  1.0 + theClamp.x * (1.0 - aCoords.x);\n"
+                               "        aCoords.x = clamp(aCoords.x, 1.0 * theClamp.x, 1.0 - aClampX);\n"
+                               "    }\n"
+                               "\n"
+                               "    float aClampY = abs(theClamp.y) < 1.0 ? theClamp.w * 2.0 : 0.0;\n"
+                               "    if(theClamp.y >= 0.0) {\n"
+                               "        aCoords.y = -1.0 + theClamp.y * (aCoords.y + 1.0);\n"
+                               "        aCoords.y = clamp(aCoords.y, -1.0 + aClampY, 1.0 * theClamp.y);\n"
+                               "    } else {\n"
+                               "        aCoords.y =  1.0 + theClamp.y * (1.0 - aCoords.y);\n"
+                               "        aCoords.y = clamp(aCoords.y, 1.0 * theClamp.y, 1.0 - aClampY);\n"
+                               "    }\n"
+                               "\n"
+                               "    float aClampZ = abs(theClamp.z) < 1.0 ? theClamp.w * 2.0 : 0.0;\n"
+                               "    if(theClamp.z >= 0.0) {\n"
+                               "        aCoords.z = -1.0 + theClamp.z * (aCoords.z + 1.0);\n"
+                               "        aCoords.z = clamp(aCoords.z, -1.0 + aClampZ, 1.0 * theClamp.z);\n"
+                               "    } else {\n"
+                               "        aCoords.z =  1.0 + theClamp.z * (1.0 - aCoords.z);\n"
+                               "        aCoords.z = clamp(aCoords.z, 1.0 * theClamp.z, 1.0 - aClampZ);\n"
+                               "    }\n"
+                               "    return aCoords;\n"
+                               "}\n\n");
+
     registerFragmentShaderPart(FragSection_ToRgb, FragToRgb_FromRgb,
         "void convertToRGB(inout vec4 color, in vec3 texCoord, in vec3 texCoordA) {}\n\n");
 
@@ -227,7 +267,7 @@ void StGLImageProgram::registerFragments(const StGLContext& theCtx) {
     const char F_SHADER_YUVNV2RGB_MPEG[] =
        "uniform stSampler uTextureU;\n"
        "void convertToRGB(inout vec4 color, in vec3 texCoordUV, in vec3 texCoordA) {\n"
-       "    vec3 colorYUV = vec3(color.a, stTexture(uTextureU, texCoordUV).r, stTexture(uTextureU, texCoordUV).a);\n"
+       "    vec3 colorYUV = vec3(color.stAlpha, stTexture(uTextureU, texCoordUV).r, stTexture(uTextureU, texCoordUV).a);\n"
        "    colorYUV   *= TheRangeBits;\n"
        "    colorYUV.x  = 1.1643 * (colorYUV.x - 0.0625);\n"
        "    colorYUV.y -= 0.5;\n"
@@ -240,7 +280,7 @@ void StGLImageProgram::registerFragments(const StGLContext& theCtx) {
     const char F_SHADER_YUVNV2RGB_FULL[] =
        "uniform stSampler uTextureU;\n"
        "void convertToRGB(inout vec4 color, in vec3 texCoordUV, in vec3 texCoordA) {\n"
-       "    vec3 colorYUV = vec3(color.a, stTexture(uTextureU, texCoordUV).r, stTexture(uTextureU, texCoordUV).a);\n"
+       "    vec3 colorYUV = vec3(color.stAlpha, stTexture(uTextureU, texCoordUV).r, stTexture(uTextureU, texCoordUV).a);\n"
        "    colorYUV   *= TheRangeBits;\n"
        "    colorYUV.x  = colorYUV.x;\n"
        "    colorYUV.y -= 0.5;\n"
@@ -326,11 +366,15 @@ void StGLImageProgram::registerFragments(const StGLContext& theCtx) {
        "varying vec3 fTexCoord;\n"
        "varying vec3 fTexUVCoord;\n"
        "varying vec3 fTexACoord;\n"
+       "varying vec3 fTexClamp;\n"
+       "varying float fTexClampW;\n"
 
        "void main(void) {\n"
        "    fTexCoord   = vec3(uTexData.xy   + vTexCoord * uTexData.zw,   0.0);\n"
        "    fTexUVCoord = vec3(uTexUVData.xy + vTexCoord * uTexUVData.zw, 0.0);\n"
        "    fTexACoord  = vec3(uTexAData.xy  + vTexCoord * uTexAData.zw,  0.0);\n"
+       "    fTexClamp   = vec3(0.0, 0.0, 0.0);\n"
+       "    fTexClampW  = 0.0;\n"
        "    gl_Position = uProjMat * uModelMat * vVertex;\n"
        "}\n";
 
@@ -343,38 +387,51 @@ void StGLImageProgram::registerFragments(const StGLContext& theCtx) {
        "uniform float uTexCubeFlipZ;\n"
 
        "attribute vec4 vVertex;\n"
-       "attribute vec2 vTexCoord;\n"
+       "attribute vec3 vNormal;\n"
+       "attribute vec4 vColor;\n"
 
        "varying vec3 fTexCoord;\n"
        "varying vec3 fTexUVCoord;\n"
        "varying vec3 fTexACoord;\n"
+       "varying vec3 fTexClamp;\n"
+       "varying float fTexClampW;\n"
 
        "void main(void) {\n"
-       "    gl_Position = vec4(vVertex.x, vVertex.y, 0.0, 1.0);\n"
-       "    vec3 aTCoord = (uProjMat * gl_Position).xyz;"
-       "    aTCoord.z  *= uTexCubeFlipZ;"
-       "    fTexCoord   = aTCoord;"
-       "    fTexUVCoord = aTCoord;"
-       "    fTexACoord  = aTCoord;"
+       "    vec4 aPos = uProjMat * uModelMat * vec4(vVertex.xyz, 1.0);\n"
+       "    gl_Position = aPos.xyww;\n"
+       "    vec3 aTCoord = vNormal;\n" // fake normal attribute
+       "    aTCoord.z  *= uTexCubeFlipZ;\n"
+       "    fTexCoord   = aTCoord;\n"
+       "    fTexUVCoord = aTCoord;\n"
+       "    fTexACoord  = aTCoord;\n"
+       "    fTexClamp   = vColor.xyz;\n" // fake color attribute
+       "    fTexClampW  = vColor.w;\n"
        "}\n";
 
     const char F_SHADER_FLAT[] =
        "varying vec3 fTexCoord;\n"
        "varying vec3 fTexUVCoord;\n"
        "varying vec3 fTexACoord;\n"
+       "varying vec3 fTexClamp;\n"
+       "varying float fTexClampW;\n"
         // we split these functions for two reasons:
         // - to change function code (like color conversion);
         // - to optimize rendering on old hardware not supported conditions (GeForce FX for example).
+       "vec3 getTexCoords(in vec3 theCoords, in vec4 theClamp);\n"
        "vec4 getColor(in vec3 texCoord);\n"
        "void convertToRGB(inout vec4 theColor, in vec3 theTexUVCoord, in vec3 texCoordA);\n"
        "void applyCorrection(inout vec4 theColor);\n"
        "void applyGamma(inout vec4 theColor);\n"
 
        "void main(void) {\n"
+       "    vec4 aTexClamp   = vec4(fTexClamp, fTexClampW);\n"
+       "    vec3 aTexCoord   = getTexCoords(fTexCoord,   aTexClamp);\n"
+       "    vec3 aTexCoordUV = getTexCoords(fTexUVCoord, aTexClamp);\n"
+       "    vec3 aTexCoordA  = getTexCoords(fTexACoord,  aTexClamp);\n"
             // extract color from main texture
-       "    vec4 aColor = getColor(fTexCoord);\n"
+       "    vec4 aColor = getColor(aTexCoord);\n"
             // convert from alien color model (like YUV) to RGB
-       "    convertToRGB(aColor, fTexUVCoord, fTexACoord);\n"
+       "    convertToRGB(aColor, aTexCoordUV, aTexCoordA);\n"
             // color processing (saturation, brightness, etc)
        "    applyCorrection(aColor);\n"
             // gamma correction
@@ -467,7 +524,8 @@ static inline StGLImageProgram::FragToRgb getColorShader(const StImage::ImgColor
 bool StGLImageProgram::init(StGLContext&                 theCtx,
                             const StImage::ImgColorModel theColorModel,
                             const StImage::ImgColorScale theColorScale,
-                            const FragGetColor           theFilter) {
+                            const FragGetColor           theFilter,
+                            const FragTexEAC theTexCoord) {
     registerFragments(theCtx);
 
     // re-configure shader parts when required
@@ -486,6 +544,7 @@ bool StGLImageProgram::init(StGLContext&                 theCtx,
     }
 
     isChanged = setFragmentShaderPart(theCtx, FragSection_ToRgb,    aToRgb) || isChanged;
+    isChanged = setFragmentShaderPart(theCtx, FragSection_GetTexCoords, theTexCoord) || isChanged;
     isChanged = setFragmentShaderPart(theCtx, FragSection_GetColor, theFilter) || isChanged;
     isChanged = setVertexShaderPart  (theCtx, 0, theFilter == FragGetColor_Cubemap ? VertMain_Cubemap : VertMain_Normal) || isChanged;
     if(isChanged) {
@@ -505,6 +564,8 @@ bool StGLImageProgram::init(StGLContext&                 theCtx,
         uniGammaLoc           = myActiveProgram->getUniformLocation(theCtx, "uGamma");
         myActiveProgram->atrVVertexLoc  = myActiveProgram->getAttribLocation(theCtx, "vVertex");
         myActiveProgram->atrVTCoordLoc  = myActiveProgram->getAttribLocation(theCtx, "vTexCoord");
+        myActiveProgram->atrVNormalLoc  = myActiveProgram->getAttribLocation(theCtx, "vNormal");
+        myActiveProgram->atrVColorsLoc  = myActiveProgram->getAttribLocation(theCtx, "vColor");
 
         StGLVarLocation uniTextureLoc  = myActiveProgram->getUniformLocation(theCtx, "uTexture");
         StGLVarLocation uniTextureULoc = myActiveProgram->getUniformLocation(theCtx, "uTextureU");

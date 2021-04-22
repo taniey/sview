@@ -1,5 +1,5 @@
 /**
- * Copyright © 2009-2019 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2009-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * Distributed under the Boost Software License, Version 1.0.
  * See accompanying file license-boost.txt or copy at
@@ -19,10 +19,12 @@
  */
 enum StViewSurface {
     StViewSurface_Plain,      //!< normal 2D image
+    StViewSurface_Theater,    //!< theater panorama
     StViewSurface_Cubemap,    //!< cubemap texture
     StViewSurface_Sphere,     //!< spherical panorama, 360 degrees
     StViewSurface_Hemisphere, //!< spherical panorama, 180 degrees
     StViewSurface_Cylinder,   //!< cylindrical panorama
+    StViewSurface_CubemapEAC, //!< equi-angular cubemap
 };
 
 /**
@@ -35,9 +37,11 @@ class StStereoParams {
     static StString GET_VIEW_MODE_NAME(StViewSurface theViewMode) {
         switch(theViewMode) {
             case StViewSurface_Cubemap:    return "cubemap";
+            case StViewSurface_CubemapEAC: return "eac";
             case StViewSurface_Sphere:     return "sphere";
             case StViewSurface_Hemisphere: return "hemisphere";
             case StViewSurface_Cylinder:   return "cylinder";
+            case StViewSurface_Theater:    return "theater";
             case StViewSurface_Plain:      return "flat";
         }
         return "flat";
@@ -46,12 +50,16 @@ class StStereoParams {
     static StViewSurface GET_VIEW_MODE_FROM_STRING(const StString& theViewModeStr) {
         if(theViewModeStr.isStartsWithIgnoreCase(stCString("cubemap"))) {
             return StViewSurface_Cubemap;
+        } else if(theViewModeStr.isStartsWithIgnoreCase(stCString("eac"))) {
+            return StViewSurface_CubemapEAC;
         } else if(theViewModeStr.isStartsWithIgnoreCase(stCString("sphere"))) {
             return StViewSurface_Sphere;
         } else if(theViewModeStr.isStartsWithIgnoreCase(stCString("hemisphere"))) {
             return StViewSurface_Hemisphere;
         } else if(theViewModeStr.isStartsWithIgnoreCase(stCString("cylinder"))) {
             return StViewSurface_Cylinder;
+        } else if(theViewModeStr.isStartsWithIgnoreCase(stCString("theater"))) {
+            return StViewSurface_Theater;
         } else {
             return StViewSurface_Plain;
         }
@@ -66,6 +74,9 @@ class StStereoParams {
             case StPanorama_Cubemap1_6:
             case StPanorama_Cubemap3_2:
                 return StViewSurface_Cubemap;
+            case StPanorama_Cubemap3_2ytb:
+            case StPanorama_Cubemap2_3ytb:
+              return StViewSurface_CubemapEAC;
             case StPanorama_Sphere:
                 return StViewSurface_Sphere;
             case StPanorama_Hemisphere:
@@ -300,7 +311,9 @@ class StStereoParams {
             case StViewSurface_Sphere:
             case StViewSurface_Hemisphere:
             case StViewSurface_Cylinder:
+            case StViewSurface_Theater:
             case StViewSurface_Cubemap:
+            case StViewSurface_CubemapEAC:
                 myPanYaw += 100.0f * theDuration;
                 break;
             case StViewSurface_Plain:
@@ -314,7 +327,9 @@ class StStereoParams {
             case StViewSurface_Sphere:
             case StViewSurface_Hemisphere:
             case StViewSurface_Cylinder:
+            case StViewSurface_Theater:
             case StViewSurface_Cubemap:
+            case StViewSurface_CubemapEAC:
                 myPanYaw -= 100.0f * theDuration;
                 break;
             case StViewSurface_Plain:
@@ -340,7 +355,9 @@ class StStereoParams {
             case StViewSurface_Sphere:
             case StViewSurface_Hemisphere:
             case StViewSurface_Cylinder:
+            case StViewSurface_Theater:
             case StViewSurface_Cubemap:
+            case StViewSurface_CubemapEAC:
                 myPanPitch = clipPitch(myPanPitch - 100.0f * theDuration);
                 break;
             case StViewSurface_Plain:
@@ -354,7 +371,9 @@ class StStereoParams {
             case StViewSurface_Sphere:
             case StViewSurface_Hemisphere:
             case StViewSurface_Cylinder:
+            case StViewSurface_Theater:
             case StViewSurface_Cubemap:
+            case StViewSurface_CubemapEAC:
                 myPanPitch = clipPitch(myPanPitch + 100.0f * theDuration);
                 break;
             case StViewSurface_Plain:

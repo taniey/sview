@@ -1,5 +1,5 @@
 /**
- * Copyright © 2009-2019 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2009-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * StMoviePlayer program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -119,7 +119,10 @@ class StMoviePlayerGUI : public StGLRootWidget {
      * Handle gesture.
      */
     ST_LOCAL void doGesture(const StGestureEvent& theEvent);
-    ST_LOCAL void setVisibility(const StPointD_t& theCursor);
+    ST_LOCAL bool isVisibleGUI() const { return myVisLerp.getValue() > 0.0; }
+    ST_LOCAL void setVisibility(const StPointD_t& theCursor,
+                                bool theToForceHide = false,
+                                bool theToForceShow = false);
 
         public:
 
@@ -171,6 +174,8 @@ class StMoviePlayerGUI : public StGLRootWidget {
     ST_LOCAL void fillDisplayRatioMenu(StGLMenu* theMenu);
     ST_LOCAL void fillSrcFormatMenu(StGLMenu* theMenu);
     ST_LOCAL void fillPanoramaMenu (StGLMenu* theMenu);
+    ST_LOCAL void fillSubtitlesFontSize(StGLMenu* theMenu);
+    ST_LOCAL void fillSubtitlesPlacement(StGLMenu* theMenu);
 
         private: //! @name mobile interface creation routines
 
@@ -205,6 +210,7 @@ class StMoviePlayerGUI : public StGLRootWidget {
     ST_LOCAL void doMobileSettings(const size_t );
     ST_LOCAL void doAudioStreamsCombo(const size_t );
     ST_LOCAL void doSubtitlesStreamsCombo(const size_t );
+    ST_LOCAL void doSubtitlesPlacement(const size_t );
     ST_LOCAL void doDisplayRatioCombo(const size_t );
     ST_LOCAL void doDisplayStereoFormatCombo(const size_t );
     ST_LOCAL void doPanoramaCombo(const size_t );

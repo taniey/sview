@@ -37,6 +37,7 @@ TARGET_OS = linux
 endif
 ifeq ($(UNAME_S),Darwin)
 TARGET_OS = osx
+TARGET_OS_VERSION = 10.10
 endif
 endif
 
@@ -52,6 +53,7 @@ BUILD_ROOT_BUNDLE = build/sView.app
 BUILD_ROOT = $(BUILD_ROOT_BUNDLE)/Contents/MacOS
 endif
 
+ST_DEBUG = 0
 FFMPEG_ROOT =
 FREETYPE_ROOT =
 OPENAL_ROOT =
@@ -64,6 +66,9 @@ ANDROID_KEYSTORE = $(BUILD_ROOT)/sview_debug.key
 ANDROID_KEYSTORE_PASSWORD = sview_store_pswd
 ANDROID_KEY = "sview android key"
 ANDROID_KEY_PASSWORD = sview_pswd
+#ST_REVISION = `git rev-list --count HEAD`
+SVIEW_APK_CODE = 1
+SVIEW_SDK_VER_STRING = 20.1
 
 # function defining library install_name to @executable_path on OS X
 libinstname =
@@ -80,6 +85,7 @@ LIB_XLIB =
 LIB_CONFIG =
 LIB_ANDROID =
 LIB_IOKIT =
+LIB_COREVIDEO =
 LIB_OPENAL = -lopenal
 LIB_OUTPUTS = -lStOutAnaglyph -lStOutDual -lStOutInterlace -lStOutPageFlip -lStOutIZ3D -lStOutDistorted
 TOOLCHAIN =
@@ -99,7 +105,10 @@ LIBSUFFIX = dylib
 LIB_PTHREAD = -lobjc
 LIB_GLX = -framework OpenGL -framework Appkit
 LIB_IOKIT = -framework IOKit
-LIB_OPENAL = -framework OpenAL
+LIB_COREVIDEO = -framework CoreVideo
+ifeq ($(OPENAL_ROOT),)
+  LIB_OPENAL = -framework OpenAL
+endif
 endif
 
 # Android libraries
@@ -160,13 +169,16 @@ TARGET_ARCH2 = x86
 endif
 
 # to activate debug build
-#EXTRA_CXXFLAGS = -DST_DEBUG_LOG_TO_FILE=\"/sdcard/Android/data/com.sview/files/sview.log\" -DST_DEBUG
+ifneq ($(ST_DEBUG),0)
+EXTRA_CXXFLAGS = -DST_DEBUG
+LDSTRIP =
+STRIPFLAGS = --info
+endif
+#EXTRA_CXXFLAGS = -DST_DEBUG_LOG_TO_FILE=\"/storage/emulated/0/Android/data/com.sview/files/sview.log\" -DST_DEBUG
 #EXTRA_CXXFLAGS += -DST_DEBUG_GL
 #EXTRA_CXXFLAGS += -DST_DEBUG_FFMPEG_VERBOSE
 #EXTRA_CXXFLAGS += -DST_DEBUG_SYSLOG
 #EXTRA_CXXFLAGS += -DST_DEBUG_THREADID
-#LDSTRIP =
-#STRIPFLAGS = --info
 
 ifdef ANDROID_NDK
 LIBSUBFOLDER = libs/$(ANDROID_EABI)
@@ -183,6 +195,14 @@ endif
 ifeq ($(TARGET_OS),osx)
 # todo
 LDSTRIP =
+
+# minimal supported version of macOS:
+# - CMake: CMAKE_OSX_DEPLOYMENT
+# - qmake: QMAKE_MACOSX_DEPLOYMENT_TARGET = $(TARGET_OS_VERSION)
+# - environment variable: export MACOSX_DEPLOYMENT_TARGET=$(TARGET_OS_VERSION)
+EXTRA_CFLAGS   += -mmacosx-version-min=$(TARGET_OS_VERSION)
+EXTRA_CXXFLAGS += -mmacosx-version-min=$(TARGET_OS_VERSION)
+EXTRA_LDFLAGS  += -mmacosx-version-min=$(TARGET_OS_VERSION)
 
 # workaround homebrew
 HAS_PKGCONF := $(shell command -v pkg-config 2> /dev/null)
@@ -226,7 +246,11 @@ endif
 
 INC =  -I$(SRCDIR)/3rdparty/include -I$(SRCDIR)/include
 CFLAGS   = -fPIC $(HAVE_MONGOOSE) $(INC) $(EXTRA_CFLAGS)
+ifneq ($(ST_DEBUG),0)
+CXXFLAGS = -g -std=c++0x -Wall -fPIC $(HAVE_MONGOOSE) $(INC) $(EXTRA_CXXFLAGS)
+else
 CXXFLAGS = -O3 -std=c++0x -Wall -fPIC $(HAVE_MONGOOSE) $(INC) $(EXTRA_CXXFLAGS)
+endif
 LIBDIR = -L$(BUILD_ROOT)
 LIB =
 LDFLAGS = $(LDSTRIP) $(LDZDEF) $(EXTRA_LDFLAGS)
@@ -250,6 +274,7 @@ sViewAndroid    := libsview.$(LIBSUFFIX)
 sViewApk        := $(SRCDIR)/build/sView.apk
 sViewApkSigned  := $(SRCDIR)/build/sView.signed.apk.tmp
 sViewApkUnsigned:= $(SRCDIR)/build/sView.unsigned.apk.tmp
+sViewApkManifest:= $(SRCDIR)/build/AndroidManifest.xml
 aDestAndroid    := build/apk-tmp
 sViewDex        := $(aDestAndroid)/classes.dex
 
@@ -289,7 +314,7 @@ install:
 	ln --force --symbolic ../../share/sView/demo/demo.jps $(DESTDIR)/$(APP_PREFIX)/$(USR_LIB)/sView/demo.jps
 	rm -f    $(DESTDIR)/$(APP_PREFIX)/$(USR_LIB)/sView/*.a
 
-install_android:
+install_android: $(sViewApkManifest)
 	mkdir -p $(aDestAndroid)/assets/info
 	mkdir -p $(aDestAndroid)/assets/lang/German
 	mkdir -p $(aDestAndroid)/assets/lang/French
@@ -298,6 +323,7 @@ install_android:
 	mkdir -p $(aDestAndroid)/assets/lang/Russian
 	mkdir -p $(aDestAndroid)/assets/lang/Czech
 	mkdir -p $(aDestAndroid)/assets/lang/ChineseS
+	mkdir -p $(aDestAndroid)/assets/lang/ChineseT
 	mkdir -p $(aDestAndroid)/assets/lang/Korean
 	mkdir -p $(aDestAndroid)/assets/shaders
 	mkdir -p $(aDestAndroid)/assets/textures
@@ -308,11 +334,12 @@ install_android:
 	cp -f -r $(BUILD_ROOT)/lang/русский/*  $(aDestAndroid)/assets/lang/Russian/
 	cp -f -r $(BUILD_ROOT)/lang/Czech/*    $(aDestAndroid)/assets/lang/Czech/
 	cp -f -r $(BUILD_ROOT)/lang/ChineseS/* $(aDestAndroid)/assets/lang/ChineseS/
+	cp -f -r $(BUILD_ROOT)/lang/ChineseT/* $(aDestAndroid)/assets/lang/ChineseT/
 	cp -f -r $(BUILD_ROOT)/lang/Korean/*   $(aDestAndroid)/assets/lang/Korean/
 	cp -f -r $(BUILD_ROOT)/shaders/*       $(aDestAndroid)/assets/shaders/
 	cp -f -r $(BUILD_ROOT)/textures/*      $(aDestAndroid)/assets/textures/
 	cp -f    license-gpl-3.0.txt           $(aDestAndroid)/assets/info/license.txt
-	$(ANDROID_BUILD_TOOLS)/aapt package -v -f -m -S $(SRCDIR)/sview/res -J $(BUILD_ROOT)/java/gen -M $(SRCDIR)/sview/AndroidManifest.xml -I $(ANDROID_PLATFORM)
+	$(ANDROID_BUILD_TOOLS)/aapt package -v -f -m -S $(SRCDIR)/sview/res -J $(BUILD_ROOT)/java/gen -M $(sViewApkManifest) -I $(ANDROID_PLATFORM)
 
 install_android_libs: $(aStShared) $(aStGLWidgets) $(aStCore) $(aStOutAnaglyph) $(aStOutInterlace) $(aStOutDistorted) $(aStImageViewer) $(aStMoviePlayer) $(sViewAndroid)
 	cp -f $(BUILD_ROOT)/$(aStShared)       $(aDestAndroid)/lib/$(ANDROID_EABI)/
@@ -364,6 +391,7 @@ pre_all:
 	mkdir -p $(BUILD_ROOT)/lang/Deutsch
 	mkdir -p $(BUILD_ROOT)/lang/Czech
 	mkdir -p $(BUILD_ROOT)/lang/ChineseS
+	mkdir -p $(BUILD_ROOT)/lang/ChineseT
 	mkdir -p $(BUILD_ROOT)/lang/Korean
 	mkdir -p $(BUILD_ROOT)/textures
 	mkdir -p $(BUILD_ROOT)/web
@@ -434,6 +462,7 @@ pre_StOutAnaglyph:
 	cp -f -r StOutAnaglyph/lang/german/*  $(BUILD_ROOT)/lang/Deutsch/
 	cp -f -r StOutAnaglyph/lang/czech/*   $(BUILD_ROOT)/lang/Czech/
 	cp -f -r StOutAnaglyph/lang/chinese/* $(BUILD_ROOT)/lang/ChineseS/
+	cp -f -r StOutAnaglyph/lang/chineset/* $(BUILD_ROOT)/lang/ChineseT/
 	cp -f -r StOutAnaglyph/lang/korean/*  $(BUILD_ROOT)/lang/Korean/
 clean_StOutAnaglyph:
 	rm -f $(BUILD_ROOT)/$(aStOutAnaglyph)
@@ -455,6 +484,7 @@ pre_StOutDual:
 	cp -f -r StOutDual/lang/german/*  $(BUILD_ROOT)/lang/Deutsch/
 	cp -f -r StOutDual/lang/czech/*   $(BUILD_ROOT)/lang/Czech/
 	cp -f -r StOutDual/lang/chinese/* $(BUILD_ROOT)/lang/ChineseS/
+	cp -f -r StOutDual/lang/chineset/* $(BUILD_ROOT)/lang/ChineseT/
 	cp -f -r StOutDual/lang/korean/*  $(BUILD_ROOT)/lang/Korean/
 clean_StOutDual:
 	rm -f $(BUILD_ROOT)/$(aStOutDual)
@@ -477,6 +507,7 @@ pre_StOutIZ3D:
 	cp -f -r StOutIZ3D/lang/german/*  $(BUILD_ROOT)/lang/Deutsch/
 	cp -f -r StOutIZ3D/lang/czech/*   $(BUILD_ROOT)/lang/Czech/
 	cp -f -r StOutIZ3D/lang/chinese/* $(BUILD_ROOT)/lang/ChineseS/
+	cp -f -r StOutIZ3D/lang/chineset/* $(BUILD_ROOT)/lang/ChineseT/
 	cp -f -r StOutIZ3D/lang/korean/*  $(BUILD_ROOT)/lang/Korean/
 clean_StOutIZ3D:
 	rm -f $(BUILD_ROOT)/$(aStOutIZ3D)
@@ -500,6 +531,7 @@ pre_StOutInterlace:
 	cp -f -r StOutInterlace/lang/german/*  $(BUILD_ROOT)/lang/Deutsch/
 	cp -f -r StOutInterlace/lang/czech/*   $(BUILD_ROOT)/lang/Czech/
 	cp -f -r StOutInterlace/lang/chinese/* $(BUILD_ROOT)/lang/ChineseS/
+	cp -f -r StOutInterlace/lang/chineset/* $(BUILD_ROOT)/lang/ChineseT/
 	cp -f -r StOutInterlace/lang/korean/*  $(BUILD_ROOT)/lang/Korean/
 clean_StOutInterlace:
 	rm -f $(BUILD_ROOT)/$(aStOutInterlace)
@@ -527,6 +559,7 @@ pre_StOutPageFlip:
 	cp -f -r StOutPageFlip/lang/german/*  $(BUILD_ROOT)/lang/Deutsch/
 	cp -f -r StOutPageFlip/lang/czech/*   $(BUILD_ROOT)/lang/Czech/
 	cp -f -r StOutPageFlip/lang/chinese/* $(BUILD_ROOT)/lang/ChineseS/
+	cp -f -r StOutPageFlip/lang/chineset/* $(BUILD_ROOT)/lang/ChineseT/
 	cp -f -r StOutPageFlip/lang/korean/*  $(BUILD_ROOT)/lang/Korean/
 clean_StOutPageFlip:
 	rm -f $(BUILD_ROOT)/$(aStOutPageFlip)
@@ -547,6 +580,7 @@ pre_StOutDistorted:
 	cp -f -r StOutDistorted/lang/german/*  $(BUILD_ROOT)/lang/Deutsch/
 	cp -f -r StOutDistorted/lang/czech/*   $(BUILD_ROOT)/lang/Czech/
 	cp -f -r StOutDistorted/lang/chinese/* $(BUILD_ROOT)/lang/ChineseS/
+	cp -f -r StOutDistorted/lang/chineset/* $(BUILD_ROOT)/lang/ChineseT/
 	cp -f -r StOutDistorted/lang/korean/*  $(BUILD_ROOT)/lang/Korean/
 clean_StOutDistorted:
 	rm -f $(BUILD_ROOT)/$(aStOutDistorted)
@@ -567,6 +601,7 @@ pre_StImageViewer:
 	cp -f -r StImageViewer/lang/german/*  $(BUILD_ROOT)/lang/Deutsch/
 	cp -f -r StImageViewer/lang/czech/*   $(BUILD_ROOT)/lang/Czech/
 	cp -f -r StImageViewer/lang/chinese/* $(BUILD_ROOT)/lang/ChineseS/
+	cp -f -r StImageViewer/lang/chineset/* $(BUILD_ROOT)/lang/ChineseT/
 	cp -f -r StImageViewer/lang/korean/*  $(BUILD_ROOT)/lang/Korean/
 clean_StImageViewer:
 	rm -f $(BUILD_ROOT)/$(aStImageViewer)
@@ -580,7 +615,7 @@ aStMoviePlayer_SRCS2 := $(sort $(wildcard $(SRCDIR)/StMoviePlayer/StVideo/*.cpp)
 aStMoviePlayer_OBJS2 := ${aStMoviePlayer_SRCS2:.cpp=.o}
 aStMoviePlayer_SRCS3 := $(sort $(wildcard $(SRCDIR)/StMoviePlayer/*.c))
 aStMoviePlayer_OBJS3 := ${aStMoviePlayer_SRCS3:.c=.o}
-aStMoviePlayer_LIB   := $(LIB) -lStGLWidgets -lStShared -lStCore $(LIB_OUTPUTS) $(LIB_GLX) $(LIB_GTK) -lavutil -lavformat -lavcodec -lswscale $(LIB_OPENAL) $(LIB_PTHREAD)
+aStMoviePlayer_LIB   := $(LIB) -lStGLWidgets -lStShared -lStCore $(LIB_OUTPUTS) $(LIB_GLX) $(LIB_GTK) -lavutil -lavformat -lavcodec -lswscale $(LIB_OPENAL) $(LIB_COREVIDEO) $(LIB_PTHREAD)
 $(aStMoviePlayer) : pre_StMoviePlayer $(aStGLWidgets) outputs_all $(aStMoviePlayer_OBJS1) $(aStMoviePlayer_OBJS2) $(aStMoviePlayer_OBJS3)
 	$(LD) -shared $(call libinstname,$@) $(LDFLAGS) $(LIBDIR) $(aStMoviePlayer_OBJS1) $(aStMoviePlayer_OBJS2) $(aStMoviePlayer_OBJS3) $(aStMoviePlayer_LIB) -o $(BUILD_ROOT)/$@
 pre_StMoviePlayer:
@@ -591,6 +626,7 @@ pre_StMoviePlayer:
 	cp -f -r StMoviePlayer/lang/german/*  $(BUILD_ROOT)/lang/Deutsch/
 	cp -f -r StMoviePlayer/lang/czech/*   $(BUILD_ROOT)/lang/Czech/
 	cp -f -r StMoviePlayer/lang/chinese/* $(BUILD_ROOT)/lang/ChineseS/
+	cp -f -r StMoviePlayer/lang/chineset/* $(BUILD_ROOT)/lang/ChineseT/
 	cp -f -r StMoviePlayer/lang/korean/*  $(BUILD_ROOT)/lang/Korean/
 	cp -f -r StMoviePlayer/web/*          $(BUILD_ROOT)/web/
 clean_StMoviePlayer:
@@ -614,6 +650,7 @@ pre_StDiagnostics:
 	cp -f -r StDiagnostics/lang/german/*  $(BUILD_ROOT)/lang/Deutsch/
 	cp -f -r StDiagnostics/lang/czech/*   $(BUILD_ROOT)/lang/Czech/
 	cp -f -r StDiagnostics/lang/chinese/* $(BUILD_ROOT)/lang/ChineseS/
+	cp -f -r StDiagnostics/lang/chineset/* $(BUILD_ROOT)/lang/ChineseT/
 	cp -f -r StDiagnostics/lang/korean/*  $(BUILD_ROOT)/lang/Korean/
 clean_StDiagnostics:
 	rm -f $(BUILD_ROOT)/$(aStDiagnostics)
@@ -646,6 +683,7 @@ pre_StCADViewer:
 	cp -f -r StCADViewer/lang/german/*  $(BUILD_ROOT)/lang/Deutsch/
 	cp -f -r StCADViewer/lang/czech/*   $(BUILD_ROOT)/lang/Czech/
 	cp -f -r StCADViewer/lang/chinese/* $(BUILD_ROOT)/lang/ChineseS/
+	cp -f -r StCADViewer/lang/chineset/* $(BUILD_ROOT)/lang/ChineseT/
 	cp -f -r StCADViewer/lang/korean/*  $(BUILD_ROOT)/lang/Korean/
 clean_StCADViewer:
 	rm -f $(BUILD_ROOT)/$(aStCADViewer)
@@ -664,6 +702,7 @@ clean_sViewAndroid:
 	rm -rf $(BUILD_ROOT)/java/classes/com/sview/*.class
 	rm -rf $(SRCDIR)/sview/src/com/sview/*class
 	rm -rf $(aDestAndroid)
+	rm -f $(sViewApkManifest)
 	rm -f $(sViewDex)
 	rm -f $(sViewApkUnsigned)
 	rm -f $(sViewApkSigned)
@@ -703,10 +742,18 @@ ifneq ($(FFMPEG_ROOT),)
 	cp -R -f $(FFMPEG_ROOT)/$(LIBSUBFOLDER)/libswscale*.dylib    $(BUILD_ROOT_BUNDLE)/Contents/Frameworks
 endif
 ifneq ($(OPENAL_ROOT),)
+	mkdir -p $(BUILD_ROOT_BUNDLE)/Contents/MacOS/openal/hrtf/
 	cp -R -f $(OPENAL_ROOT)/$(LIBSUBFOLDER)/libopenal*.dylib     $(BUILD_ROOT_BUNDLE)/Contents/Frameworks
+	cp -f -r $(OPENAL_ROOT)/hrtf/*.mhr                           $(BUILD_ROOT_BUNDLE)/Contents/MacOS/openal/hrtf/
 endif
 endif
 	@echo sView building is DONE
+
+
+$(sViewApkManifest):
+	cp -f -r $(SRCDIR)/sview/AndroidManifest.xml.in $(SRCDIR)/build/AndroidManifest.xml
+	sed -i "s/__SVIEW_APK_VER_CODE__/$(SVIEW_APK_CODE)/gi"          $(SRCDIR)/build/AndroidManifest.xml
+	sed -i "s/__SVIEW_SDK_VER_STRING__/$(SVIEW_SDK_VER_STRING)/gi"  $(SRCDIR)/build/AndroidManifest.xml
 
 $(sViewApk): $(sViewApkSigned)
 	$(ANDROID_BUILD_TOOLS)/zipalign -v -f 4 $< $(sViewApk)
@@ -731,17 +778,17 @@ $(sViewApkSigned): $(sViewApkUnsigned) sView_keystore_debug
 endif
 endif
 
-$(sViewApkUnsigned): $(sViewDex) install_android_libs
+$(sViewApkUnsigned): $(sViewDex) $(sViewApkManifest) install_android_libs
 	rm -f $(sViewApkUnsigned)
-	$(ANDROID_BUILD_TOOLS)/aapt package -v -f -M $(SRCDIR)/sview/AndroidManifest.xml -S $(SRCDIR)/sview/res -I $(ANDROID_PLATFORM) -F $(sViewApkUnsigned) $(aDestAndroid)
+	$(ANDROID_BUILD_TOOLS)/aapt package -v -f -M $(sViewApkManifest) -S $(SRCDIR)/sview/res -I $(ANDROID_PLATFORM) -F $(sViewApkUnsigned) $(aDestAndroid)
 
 sView_SRCS_JAVA1 := $(sort $(wildcard $(SRCDIR)/sview/src/com/sview/*.java))
 sView_OBJS_JAVA1 := ${sView_SRCS_JAVA1:.java=.class}
 $(sViewDex): $(BUILD_ROOT)/java/gen/com/sview/R.class $(sView_OBJS_JAVA1)
 	$(ANDROID_BUILD_TOOLS)/dx --dex --verbose --output=$(sViewDex) $(BUILD_ROOT)/java/classes
 
-$(BUILD_ROOT)/java/gen/com/sview/R.java: install_android $(shell find $(SRCDIR)/sview/res -type f)
-	$(ANDROID_BUILD_TOOLS)/aapt package -v -f -m -S $(SRCDIR)/sview/res -J $(BUILD_ROOT)/java/gen -M $(SRCDIR)/sview/AndroidManifest.xml -I $(ANDROID_PLATFORM)
+$(BUILD_ROOT)/java/gen/com/sview/R.java: install_android $(sViewApkManifest) $(shell find $(SRCDIR)/sview/res -type f)
+	$(ANDROID_BUILD_TOOLS)/aapt package -v -f -m -S $(SRCDIR)/sview/res -J $(BUILD_ROOT)/java/gen -M $(sViewApkManifest) -I $(ANDROID_PLATFORM)
 
 # This target generates a dummy signing key for debugging purposes.
 # Executed only when ANDROID_KEYSTORE points to non-existing file.

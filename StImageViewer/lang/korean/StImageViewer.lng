@@ -63,6 +63,8 @@
 ?1288=Stick at panorama 360°
 ?1291=Cubemap 6x1 - flip Z
 ?1292=Cubemap 3x2 - flip Z
+?1293=Equiangular cubemap
+?1294=Theater
 1400=장치 변경
 ?1401=About Plugin...
 ?1402=Show FPS
@@ -183,3 +185,4 @@
 ?6040=X Rotation - up
 ?6041=X Rotation - down
 ?6042=Enable/disable panorama mode
+?6043=Show/hide GUI

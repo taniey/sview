@@ -1,5 +1,5 @@
 /**
- * Copyright © 2009-2013 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2009-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * Distributed under the Boost Software License, Version 1.0.
  * See accompanying file license-boost.txt or copy at
@@ -27,30 +27,22 @@ class StGLFrameTexture : public StGLTexture {
     /**
      * @return data size in the texture.
      */
-    inline const StGLVec2& getDataSize() {
-        return myDataSize;
-    }
+    ST_LOCAL const StGLVec2& getDataSize() { return myDataSize; }
 
     /**
-     * @param theDataSize - setted data size in the texture.
+     * @param theDataSize - set data size in the texture.
      */
-    inline void setDataSize(const StGLVec2& theDataSize) {
-        myDataSize = theDataSize;
-    }
+    ST_LOCAL void setDataSize(const StGLVec2& theDataSize) { myDataSize = theDataSize; }
 
     /**
      * @return display aspect ratio.
      */
-    inline GLfloat getDisplayRatio() const {
-        return myDisplayRatio;
-    }
+    ST_LOCAL GLfloat getDisplayRatio() const { return myDisplayRatio; }
 
     /**
      * @param theValue - display aspect ratio.
      */
-    inline void setDisplayRatio(const GLfloat theValue) {
-        myDisplayRatio = theValue;
-    }
+    ST_LOCAL void setDisplayRatio(const GLfloat theValue) { myDisplayRatio = theValue; }
 
     /**
      * Returns Pixel Aspect Ratio.
@@ -62,11 +54,22 @@ class StGLFrameTexture : public StGLTexture {
      */
     ST_LOCAL void setPixelRatio(const GLfloat thePAR) { myPAR = thePAR; }
 
+    /**
+     * Returns packed panorama format.
+     */
+    ST_LOCAL StPanorama getPackedPanorama() const { return myPanorama; }
+
+    /**
+     * Sets packed panorama format.
+     */
+    ST_LOCAL void setPackedPanorama(StPanorama thePano) { myPanorama = thePano; }
+
         private:
 
-    StGLVec2 myDataSize;     //!< data size in the texture (x()=right and y()=bottom)
-    float    myDisplayRatio; //!< display aspect ratio
-    float    myPAR;          //!< pixel aspect ratio
+    StGLVec2   myDataSize;     //!< data size in the texture (x()=right and y()=bottom)
+    float      myDisplayRatio; //!< display aspect ratio
+    float      myPAR;          //!< pixel aspect ratio
+    StPanorama myPanorama;     //!< packed panorama format
 
 };
 

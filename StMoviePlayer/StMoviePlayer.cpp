@@ -1,5 +1,5 @@
 /**
- * Copyright © 2007-2019 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2007-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * StMoviePlayer program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -75,6 +75,7 @@ namespace {
     static const char ST_ARGUMENT_FILE_DEMO[]  = "demo";
     static const char ST_ARGUMENT_FILE_PAUSE[] = "pause";
     static const char ST_ARGUMENT_FILE_PAUSED[]= "paused";
+    static const char ST_ARGUMENT_FILE_SEEK[]  = "seek";
     static const char ST_ARGUMENT_MONITOR[]    = "monitorId";
     static const char ST_ARGUMENT_WINLEFT[]    = "windowLeft";
     static const char ST_ARGUMENT_WINTOP[]     = "windowTop";
@@ -154,6 +155,7 @@ void StMoviePlayer::updateStrings() {
     params.ToShowFps->setName(tr(MENU_FPS_METER));
     params.ToShowMenu->setName(stCString("Show main menu"));
     params.ToShowTopbar->setName(stCString("Show top toolbar"));
+    params.ToShowBottom->setName(stCString("Show seekbar"));
     params.ToMixImagesVideos->setName(stCString("Mix images & videos"));
     params.SlideShowDelay->setName(stCString("Slideshow delay"));
     params.IsMobileUI->setName(stCString("Mobile UI"));
@@ -182,7 +184,7 @@ void StMoviePlayer::updateStrings() {
 #if defined(_WIN32)
     const StCString aGpuAcc = stCString(" (DXVA2)");
 #elif defined(__APPLE__)
-    const StCString aGpuAcc = stCString(" (VDA)");
+    const StCString aGpuAcc = stCString(" (VideoToolbox)");
 #elif defined(__ANDROID__)
     const StCString aGpuAcc = stCString(""); //stCString(" (Android Media Codec)");
 #else
@@ -287,6 +289,7 @@ StMoviePlayer::StMoviePlayer(const StHandle<StResourceManager>& theResMgr,
     params.ToShowFps   = new StBoolParamNamed(false, stCString("toShowFps"));
     params.ToShowMenu  = new StBoolParamNamed(true,  stCString("toShowMenu"));
     params.ToShowTopbar= new StBoolParamNamed(true,  stCString("toShowTopbar"));
+    params.ToShowBottom= new StBoolParamNamed(true,  stCString("toShowBottom"));
     params.ToMixImagesVideos = new StBoolParamNamed(false,  stCString("toMixImagesVideos"));
     params.ToMixImagesVideos->signals.onChanged = stSlot(this, &StMoviePlayer::doChangeMixImagesVideos);
     params.SlideShowDelay = new StFloat32Param(4.0f, stCString("slideShowDelay2"));
@@ -431,6 +434,9 @@ StMoviePlayer::StMoviePlayer(const StHandle<StResourceManager>& theResMgr,
 
     anAction = new StActionBool(stCString("DoShowFPS"), params.ToShowFps);
     addAction(Action_ShowFps, anAction, ST_VK_F12);
+
+    anAction = new StActionIntSlot(stCString("DoShowGUI"), stSlot(this, &StMoviePlayer::doShowHideGUI), 0);
+    addAction(Action_ShowGUI, anAction, ST_VK_TILDE);
 
     anAction = new StActionIntValue(stCString("DoSrcAuto"), params.SrcStereoFormat, StFormat_AUTO);
     addAction(Action_SrcAuto, anAction, ST_VK_A);
@@ -710,6 +716,12 @@ bool StMoviePlayer::createGui(StHandle<StGLTextureQueue>& theTextureQueue,
     }
 
     myGUI->stglInit();
+    StRectF_t aFrustL, aFrustR;
+    if(myWindow->getCustomProjection(aFrustL, aFrustR)) {
+        myGUI->changeCamera()->setCustomProjection(aFrustL, aFrustR);
+    } else {
+        myGUI->changeCamera()->resetCustomProjection();
+    }
     myGUI->stglResize(myWindow->stglViewport(ST_WIN_MASTER), myWindow->getMargins(), (float )myWindow->stglAspectRatio());
 
     for(size_t anIter = 0; anIter < myGUI->myImage->getActions().size(); ++anIter) {
@@ -1060,8 +1072,13 @@ bool StMoviePlayer::open() {
     myPlayList->clear();
 
     //StArgument argFile1     = myOpenFileInfo->getArgumentsMap()[ST_ARGUMENT_FILE + 1]; // playlist?
-    StArgument argFileLeft  = myOpenFileInfo->getArgumentsMap()[ST_ARGUMENT_FILE_LEFT];
-    StArgument argFileRight = myOpenFileInfo->getArgumentsMap()[ST_ARGUMENT_FILE_RIGHT];
+    const StArgument argFileLeft  = myOpenFileInfo->getArgumentsMap()[ST_ARGUMENT_FILE_LEFT];
+    const StArgument argFileRight = myOpenFileInfo->getArgumentsMap()[ST_ARGUMENT_FILE_RIGHT];
+    const StArgument anArgSeek    = myOpenFileInfo->getArgumentsMap()[ST_ARGUMENT_FILE_SEEK];
+    if(anArgSeek.isValid()) {
+        StCLocale aCLocale;
+        mySeekOnLoad = stStringToDouble(anArgSeek.getValue().toCString(), aCLocale);
+    }
     if(argFileLeft.isValid() && argFileRight.isValid()) {
         // meta-file
         const size_t aRecent = myPlayList->findRecent(argFileLeft.getValue(), argFileRight.getValue());
@@ -1074,19 +1091,52 @@ bool StMoviePlayer::open() {
         }
         myPlayList->addOneFile(argFileLeft.getValue(), argFileRight.getValue());
     } else if(!anOpenMIME.isEmpty()) {
+        // handle URI with #t=SECONDS tail
+        StString aFilePath = myOpenFileInfo->getPath();
+        StHandle< StArrayList<StString> > anUriParams = aFilePath.split('#', 2);
+        if(StFileNode::isRemoteProtocolPath(aFilePath)
+        && anUriParams->size() == 2) {
+            aFilePath = anUriParams->getFirst();
+            StString aParams = anUriParams->getLast();
+            if(aParams.isStartsWith(stCString("t="))) {
+                StCLocale aCLocale;
+                mySeekOnLoad = stStringToDouble(aParams.toCString() + 2, aCLocale);
+            }
+        }
+
         // create just one-file playlist
         myPlayList->addOneFile(myOpenFileInfo->getPath(), anOpenMIME);
     } else {
+        // handle URI with #t=SECONDS tail
+        StString aFilePath = myOpenFileInfo->getPath();
+        double aSeekPos = -1.0;
+        StHandle< StArrayList<StString> > anUriParams = aFilePath.split('#', 2);
+        if(StFileNode::isRemoteProtocolPath(aFilePath)
+        && anUriParams->size() == 2) {
+            aFilePath = anUriParams->getFirst();
+            StString aParams = anUriParams->getLast();
+            if(aParams.isStartsWith(stCString("t="))) {
+                StCLocale aCLocale;
+                aSeekPos = stStringToDouble(aParams.toCString() + 2, aCLocale);
+            }
+        }
+
         // create playlist from file's folder
-        const size_t aRecent = myPlayList->findRecent(myOpenFileInfo->getPath());
+        const size_t aRecent = myPlayList->findRecent(aFilePath);
         if(aRecent != size_t(-1)) {
             doOpenRecent(aRecent);
+            if(aSeekPos >= 0.0) {
+                mySeekOnLoad = aSeekPos;
+            }
             if(isPaused) {
                 myVideo->pushPlayEvent(ST_PLAYEVENT_PAUSE);
             }
             return true;
         }
-        myPlayList->open(myOpenFileInfo->getPath());
+        if(aSeekPos >= 0.0) {
+            mySeekOnLoad = aSeekPos;
+        }
+        myPlayList->open(aFilePath);
     }
 
     if(!myPlayList->isEmpty()) {
@@ -1111,6 +1161,12 @@ void StMoviePlayer::doResize(const StSizeEvent& ) {
     if(toMobileGui != wasMobileGui) {
         doChangeMobileUI(params.IsMobileUI->getValue());
     } else {
+        StRectF_t aFrustL, aFrustR;
+        if(myWindow->getCustomProjection(aFrustL, aFrustR)) {
+            myGUI->changeCamera()->setCustomProjection(aFrustL, aFrustR);
+        } else {
+            myGUI->changeCamera()->resetCustomProjection();
+        }
         myGUI->stglResize(myWindow->stglViewport(ST_WIN_MASTER), myWindow->getMargins(), (float )myWindow->stglAspectRatio());
     }
 }
@@ -1297,10 +1353,30 @@ void StMoviePlayer::doFromClipboard(size_t ) {
         return;
     }
 
+    // handle URI with #t=SECONDS tail
+    double aSeekPos = -1.0;
+    StHandle< StArrayList<StString> > anUriParams = aText.split('#', 2);
+    if(StFileNode::isRemoteProtocolPath(aText)
+    && anUriParams->size() == 2) {
+        aText = anUriParams->getFirst();
+        StString aParams = anUriParams->getLast();
+        if(aParams.isStartsWith(stCString("t="))) {
+            StCLocale aCLocale;
+            aSeekPos = stStringToDouble(aParams.toCString() + 2, aCLocale);
+        }
+    }
+
     const size_t aRecent = myPlayList->findRecent(aText);
     if(aRecent != size_t(-1)) {
         doOpenRecent(aRecent);
+        if(aSeekPos >= 0.0) {
+            mySeekOnLoad = aSeekPos;
+        }
         return;
+    }
+
+    if(aSeekPos >= 0.0) {
+        mySeekOnLoad = aSeekPos;
     }
     myPlayList->open(aText);
     if(!myPlayList->isEmpty()) {
@@ -1413,6 +1489,7 @@ void StMoviePlayer::doFileDrop(const StDNDropEvent& theEvent) {
             myPlayList->addOneFile(aPath, StMIME());
         }
     }
+
     doUpdateStateLoading();
     myVideo->pushPlayEvent(ST_PLAYEVENT_RESUME);
     myVideo->doLoadNext();
@@ -1811,6 +1888,14 @@ void StMoviePlayer::doAboutFile(const size_t ) {
     }
 }
 
+void StMoviePlayer::doSwitchViewMode(const int32_t theMode) {
+    if(myVideo.isNull()) {
+        return;
+    }
+
+    myVideo->setTheaterMode(theMode == StViewSurface_Theater);
+}
+
 void StMoviePlayer::doPanoramaOnOff(const size_t ) {
     if(myVideo.isNull()) {
         return;
@@ -1934,6 +2019,16 @@ void StMoviePlayer::doListLast(const size_t ) {
     if(myPlayList->walkToLast()) {
         myVideo->doLoadNext();
         doUpdateStateLoading();
+    }
+}
+
+void StMoviePlayer::doShowHideGUI(const size_t ) {
+    const bool toShow = !params.ToShowMenu->getValue() || (!myGUI.isNull() && !myGUI->isVisibleGUI());
+    params.ToShowMenu->setValue(toShow);
+    params.ToShowTopbar->setValue(toShow);
+    params.ToShowBottom->setValue(toShow);
+    if(toShow && !myGUI.isNull()) {
+        myGUI->setVisibility(myWindow->getMousePos(), false, true);
     }
 }
 
@@ -2155,6 +2250,11 @@ int StMoviePlayer::beginRequest(mg_connection*         theConnection,
         const long aVol = stStringToLong(aQuery.toCString(), 10, aCLocale);
         params.AudioGain->setValue(volumeToGain(params.AudioGain, GLfloat(aVol) * 0.01f));
         aContent = "audio set volume...";
+    } else if(anURI.isEquals(stCString("/seek"))) {
+        StCLocale aCLocale;
+        const double aPosSec = stStringToDouble(aQuery.toCString(), aCLocale);
+        myVideo->pushPlayEvent(ST_PLAYEVENT_SEEK, aPosSec);
+        aContent = "seek to position...";
     } else if(anURI.isEquals(stCString("/fullscr_win"))) {
         invokeAction(Action_Fullscreen);
         aContent = "switch fullscreen/windowed...";

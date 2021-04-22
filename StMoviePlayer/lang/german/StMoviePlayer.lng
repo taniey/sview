@@ -76,6 +76,8 @@
 ?1286=Track orientation (poor)
 ?1287=Orient audio
 ?1288=Stick at panorama 360°
+?1293=Equiangular cubemap
+1294=Theater
 1300=Audio
 1301=keiner
 1302=Audio/Video Verzögerung
@@ -260,3 +262,4 @@
 6055=X-Drehung - nach oben
 6056=X-Drehung - nach unten
 6057=Aktivieren / Deaktivieren der Panorama-Modus
+6058=GUI ausblenden

@@ -59,7 +59,7 @@ class StHWAccelContext {
     /**
      * Release decoder.
      */
-    virtual void decoderDestroy() = 0;
+    virtual void decoderDestroy(AVCodecContext* theCodecCtx) = 0;
 
     /**
      * AVFrame initialization callback.
@@ -195,6 +195,13 @@ class StVideoQueue : public StAVPacketQueue {
      */
     ST_LOCAL StFormat getStereoFormatFromName() const {
         return myStFormatByName;
+    }
+
+    /**
+     * Set theater mode.
+     */
+    ST_LOCAL void setTheaterMode(bool theIsTheater) {
+        myIsTheaterMode = theIsTheater;
     }
 
     /**
@@ -390,8 +397,10 @@ private:
     StHandle<StVideoQueue>     mySlave;           //!< handle to Slave  decoding thread
 
     StHandle<StHWAccelContext> myHWAccelCtx;
-#if defined(__APPLE__) || defined(__ANDROID__)
-    AVCodec*                   myCodecH264HW;     //!< h264 decoder using dedicated hardware (VDA codec on OS X; Android Media Codec)
+#if defined(__ANDROID__)
+    AVCodec*                   myCodecH264HW;     //!< h264 decoder using dedicated hardware (Android Media Codec)
+    AVCodec*                   myCodecHevcHW;     //!< hevc decoder using dedicated hardware
+    AVCodec*                   myCodecVp9HW;      //!< vp9  decoder using dedicated hardware
 #endif
     AVCodec*                   myCodecOpenJpeg;   //!< libopenjpeg decoder
     bool                       myUseGpu;          //!< activate decoding on GPU when possible
@@ -430,6 +439,7 @@ private:
     volatile StFormat          myStFormatByUser;  //!< source format specified by user
     volatile StFormat          myStFormatByName;  //!< source format detected from file name
     volatile StFormat          myStFormatInStream;//!< source format information retrieved from stream
+    volatile bool              myIsTheaterMode;   //!< flag indicating theater mode
     volatile bool              myToStickPano360;  //!< stick to panorama 360 mode
     volatile bool              myToSwapJps;       //!< read JPS as Left/Right instead of Right/Left
 

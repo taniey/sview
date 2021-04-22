@@ -1,5 +1,5 @@
 /**
- * Copyright © 2009-2019 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2009-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * Distributed under the Boost Software License, Version 1.0.
  * See accompanying file license-boost.txt or copy at
@@ -10,6 +10,9 @@
 #include <StStrings/StLogger.h>
 
 #include <StGLCore/StGLCore11.h>
+#include <StGL/StGLContext.h>
+
+#include <StAV/StAVImage.h>
 
 StGLTextureData::StGLTextureData(const StHandle<StGLTextureUploadParams>& theUploadParams)
 : myPrev(NULL),
@@ -325,6 +328,10 @@ inline bool checkCubeMap(const StImagePlane& thePlane,
             theCoeffX = 3;
             theCoeffY = 2;
             return true;
+        } else if(thePlane.getSizeX() / 2 == thePlane.getSizeY() / 3) {
+            theCoeffX = 2;
+            theCoeffY = 3;
+            return true;
         }
         return false;
     }
@@ -594,12 +601,17 @@ void StGLTextureData::updateData(const StGLDeviceCaps&           theDeviceCaps,
 }
 
 void StGLTextureData::validateCubemap(const StCubemap theCubemap) {
-    if(theCubemap != StCubemap_Packed) {
+    if(theCubemap != StCubemap_Packed
+    && theCubemap != StCubemap_PackedEAC) {
         myCubemapFormat = StCubemap_OFF;
         return;
     }
 
     myCubemapFormat = theCubemap;
+    if(theCubemap == StCubemap_PackedEAC) {
+        return;
+    }
+
     size_t aCoeffs[2] = {0, 0};
     if(!myDataL.isNull()) {
         for(size_t aPlaneId = 0; aPlaneId < 4; ++aPlaneId) {
@@ -628,74 +640,168 @@ void StGLTextureData::fillTexture(StGLContext&        theCtx,
         return;
     }
 
-    if(myCubemapFormat != StCubemap_Packed) {
+    if(myCubemapFormat != StCubemap_Packed
+    && myCubemapFormat != StCubemap_PackedEAC) {
         theFrameTexture.fillPatch(theCtx, theData, GL_TEXTURE_2D, myFillFromRow, myFillFromRow + myFillRows);
         return;
     }
 
     size_t aCoeffs[2] = {0, 0};
-    if(!checkCubeMap(theData, aCoeffs[0], aCoeffs[1])) {
+    if(myCubemapFormat == StCubemap_PackedEAC) {
+        if(theData.getSizeX() > theData.getSizeY()) {
+            aCoeffs[0] = 3;
+            aCoeffs[1] = 2;
+        } else {
+            aCoeffs[0] = 2;
+            aCoeffs[1] = 3;
+        }
+    } else {
+        if(!checkCubeMap(theData, aCoeffs[0], aCoeffs[1])) {
+            return;
+        }
+    }
+
+    const size_t aPatchX = theData.getSizeX() / aCoeffs[0];
+    const size_t aPatchY = theData.getSizeY() / aCoeffs[1];
+    if(aPatchX < 2 || aPatchY < 2) {
         return;
     }
 
-    const size_t aPatch = theData.getSizeX() / aCoeffs[0];
-    if(aPatch < 2) {
-        return;
-    }
+    static const GLenum THE_SIDES_GL[6] = { GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+                                            GL_TEXTURE_CUBE_MAP_POSITIVE_Y, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+                                            GL_TEXTURE_CUBE_MAP_POSITIVE_Z, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z };
+    static const GLenum THE_SIDES_EAC32[6] = { GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+                                               GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, GL_TEXTURE_CUBE_MAP_POSITIVE_Z, GL_TEXTURE_CUBE_MAP_POSITIVE_Y };
+    static const GLenum THE_SIDES_EAC23[6] = { GL_TEXTURE_CUBE_MAP_NEGATIVE_X, GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
+                                               GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
+                                               GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y };
 
-    const GLenum aTargets[6] = { GL_TEXTURE_CUBE_MAP_POSITIVE_X,
-                                 GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
-                                 GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
-                                 GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
-                                 GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
-                                 GL_TEXTURE_CUBE_MAP_NEGATIVE_Z };
+    const GLenum* aTargets = myCubemapFormat == StCubemap_PackedEAC
+                           ? (aCoeffs[1] == 3 ? THE_SIDES_EAC23 : THE_SIDES_EAC32)
+                           : THE_SIDES_GL;
     for(size_t aTargetIter = 0; aTargetIter < 6; ++aTargetIter) {
         StImagePlane aPlane;
         size_t aTop = 0, aLeft = 0;
+        bool toTranspose = false;
         switch(aCoeffs[1]) {
-            case 1: {
-                // 6x1
-                aLeft = aPatch * aTargetIter;
+            case 1: { // 6x1
+                aLeft = aPatchX * aTargetIter;
                 aTop  = 0;
                 break;
             }
             case 2: { // 3x2
                 if(aTargetIter >= 3) {
                     // second row
-                    aLeft = aPatch * (aTargetIter - 3);
-                    aTop  = aPatch;
+                    aLeft = aPatchX * (aTargetIter - 3);
+                    aTop  = aPatchY;
+                    if(myCubemapFormat == StCubemap_PackedEAC) {
+                        toTranspose = true;
+                    }
                 } else {
                     // first row
-                    aLeft = aPatch * aTargetIter;
+                    aLeft = aPatchX * aTargetIter;
                     aTop  = 0;
                 }
                 break;
             }
-            case 6: {
-                // 1x6
+            case 3: { // 2x3
+                if(aTargetIter >= 4) {
+                    // third row
+                    aLeft = aPatchX * (aTargetIter - 4);
+                    aTop  = aPatchY * 2;
+                } else if(aTargetIter >= 2) {
+                    // second row
+                    aLeft = aPatchX * (aTargetIter - 2);
+                    aTop  = aPatchY;
+                } else {
+                    // first row
+                    aLeft = aPatchX * aTargetIter;
+                    aTop  = 0;
+                }
+
+                if(myCubemapFormat == StCubemap_PackedEAC
+                && (aTargetIter % 2) == 0) {
+                    toTranspose = true;
+                }
+                break;
+            }
+            case 6: { // 1x6
                 aLeft = 0;
-                aTop  = aPatch * aTargetIter;
+                aTop  = aPatchY * aTargetIter;
                 break;
             }
         }
         if(!aPlane.initWrapper(theData.getFormat(), const_cast<GLubyte* >(theData.getData(aTop, aLeft)),
-                               aPatch, aPatch, theData.getSizeRowBytes())) {
+                               aPatchX, aPatchY, theData.getSizeRowBytes())) {
             ST_DEBUG_LOG("StGLTextureData::fillTexture(). wrapping failure");
             continue;
         }
-        theFrameTexture.fillPatch(theCtx, aPlane, aTargets[aTargetIter], myFillFromRow, myFillFromRow + myFillRows);
+
+        StImagePlane* aResPlane = &aPlane;
+
+        // this is too slow without multi-threading
+        (void )toTranspose;
+        /*if(toTranspose) {
+            StImagePlane& aTmpPlane = theCtx.getTmpImagePlane1();
+            aTmpPlane.initTransposedCopy(aPlane, aCoeffs[1] != 3);
+            aResPlane = &aTmpPlane;
+        }
+
+        if(aPatchX != aPatchY) {
+            size_t aPatch = stMax(aPatchX, aPatchY);
+            StImagePlane& aTmpPlane2 = theCtx.getTmpImagePlane2();
+            if(aTmpPlane2.getFormat() != aResPlane->getFormat()
+            || aTmpPlane2.getSizeX() != aResPlane->getSizeX()
+            || aTmpPlane2.getSizeY() != aResPlane->getSizeY()) {
+                aTmpPlane2.initTrash(aResPlane->getFormat(), aPatch, aPatch);
+            }
+            if(!aTmpPlane2.isNull()) {
+                StAVImage::resizePlane(*aResPlane, aTmpPlane2);
+                aResPlane = &aTmpPlane2;
+            }
+        }*/
+
+        theFrameTexture.fillPatch(theCtx, *aResPlane, aTargets[aTargetIter], myFillFromRow, myFillFromRow + myFillRows);
     }
 }
 
-static void setupDataRectangle(const StImagePlane& theImagePlane,
-                               const GLfloat       thePixelRatio,
-                               StGLFrameTexture&   theTextureFrame) {
+void StGLTextureData::setupDataRectangle(const StImagePlane& theImagePlane,
+                                         const GLfloat       thePixelRatio,
+                                         StGLFrameTexture&   theTextureFrame) {
     if(theImagePlane.isNull() || !theTextureFrame.isValid()) {
         return;
     }
 
-    const GLfloat aSizeXFloat = stMin(GLfloat(theImagePlane.getSizeX()), GLfloat(theTextureFrame.getSizeX()));
-    const GLfloat aSizeYFloat = stMin(GLfloat(theImagePlane.getSizeY()), GLfloat(theTextureFrame.getSizeY()));
+    size_t anImgSizeX = theImagePlane.getSizeX();
+    size_t anImgSizeY = theImagePlane.getSizeY();
+
+    StPanorama aPano = StPanorama_OFF;
+    size_t aCoeffs[2] = {0, 0};
+    if(myCubemapFormat == StCubemap_Packed
+    && checkCubeMap(theImagePlane, aCoeffs[0], aCoeffs[1])) {
+        anImgSizeX = anImgSizeX / aCoeffs[0];
+        anImgSizeY = anImgSizeY / aCoeffs[1];
+        switch(aCoeffs[0]) {
+            case 1: aPano = StPanorama_Cubemap1_6; break;
+            case 3: aPano = StPanorama_Cubemap3_2; break;
+            case 6: aPano = StPanorama_Cubemap6_1; break;
+        }
+    } else if(myCubemapFormat == StCubemap_PackedEAC) {
+        if(theImagePlane.getSizeX() > theImagePlane.getSizeY()) {
+            aCoeffs[0] = 3;
+            aCoeffs[1] = 2;
+            aPano = StPanorama_Cubemap3_2ytb;
+        } else {
+            aCoeffs[0] = 2;
+            aCoeffs[1] = 3;
+            aPano = StPanorama_Cubemap2_3ytb;
+        }
+        anImgSizeX = anImgSizeX / aCoeffs[0];
+        anImgSizeY = anImgSizeY / aCoeffs[1];
+    }
+
+    const GLfloat aSizeXFloat = stMin(GLfloat(anImgSizeX), GLfloat(theTextureFrame.getSizeX()));
+    const GLfloat aSizeYFloat = stMin(GLfloat(anImgSizeY), GLfloat(theTextureFrame.getSizeY()));
     StGLVec2 aDataSize (aSizeXFloat / GLfloat(theTextureFrame.getSizeX()),
                         aSizeYFloat / GLfloat(theTextureFrame.getSizeY()));
     if(aDataSize.x() > 1.0f) {
@@ -707,6 +813,7 @@ static void setupDataRectangle(const StImagePlane& theImagePlane,
     theTextureFrame.setDataSize(aDataSize);
     theTextureFrame.setDisplayRatio((thePixelRatio * aSizeXFloat) / aSizeYFloat);
     theTextureFrame.setPixelRatio(thePixelRatio);
+    theTextureFrame.setPackedPanorama(aPano);
 }
 
 void StGLTextureData::setupAttributes(StGLFrameTextures& stFrameTextures, const StImage& theImage) {
@@ -747,6 +854,23 @@ static void prepareTextures(StGLContext&       theCtx,
             aTarget = GL_TEXTURE_CUBE_MAP;
             aSizeX  = aSizeX / GLsizei(aCoeffs[0]);
             aSizeY  = aSizeY / GLsizei(aCoeffs[1]);
+            if(aSizeX < 1) {
+                aTexture.release(theCtx);
+                continue;
+            }
+            aSizeX  = stMax(aSizeX, aSizeY); // cubemap requires squared images
+            aSizeY  = stMax(aSizeX, aSizeY);
+        } else if(theCubemap == StCubemap_PackedEAC) {
+            if(aSizeX > aSizeY) {
+                aSizeX /= 3;
+                aSizeY /= 2;
+            } else {
+                aSizeX /= 2;
+                aSizeY /= 3;
+            }
+            aTarget = GL_TEXTURE_CUBE_MAP;
+            aSizeX  = stMax(aSizeX, aSizeY); // cubemap requires squared images
+            aSizeY  = stMax(aSizeX, aSizeY);
         }
         if(aSizeX < 1) {
             aTexture.release(theCtx);
@@ -802,6 +926,9 @@ bool StGLTextureData::fillTexture(StGLContext&     theCtx,
             aNbIters = stMin(aMaxUploadIterations, aNbMaxRows / aNbMaxFrameRows);
         }
         myFillRows = (aNbIters > 0) ? (aNbMaxRows / aNbIters) : aNbMaxRows;
+        if(myCubemapFormat == StCubemap_Packed || myCubemapFormat == StCubemap_PackedEAC) {
+            myFillRows = INT_MAX; /// TODO handle cube maps incremental updates specificall
+        }
         myFillFromRow = 0;
     }
 

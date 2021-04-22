@@ -56,10 +56,6 @@ namespace {
 }
 
 AVPixelFormat StVideoQueue::getFrameFormat(const AVPixelFormat* theFormats) {
-#if defined(__APPLE__)
-    // TODO - this decoder is no more available in FFmpeg
-    if(myCodecCtx->codec == myCodecH264HW) { return stAV::PIX_FMT::YUV420P; }
-#endif
     if(!myUseGpu || myIsGpuFailed) {
         return avcodec_default_get_format(myCodecCtx, theFormats);
     }
@@ -72,6 +68,14 @@ AVPixelFormat StVideoQueue::getFrameFormat(const AVPixelFormat* theFormats) {
 
     #if defined(_WIN32)
         if(*aFormatIter == stAV::PIX_FMT::DXVA2_VLD) {
+            if(!hwaccelInit()) {
+                myIsGpuFailed = true;
+                return avcodec_default_get_format(myCodecCtx, theFormats);
+            }
+            return *aFormatIter;
+        }
+    #elif defined(__APPLE__)
+        if(*aFormatIter == stAV::PIX_FMT::VIDEOTOOLBOX_VLD) {
             if(!hwaccelInit()) {
                 myIsGpuFailed = true;
                 return avcodec_default_get_format(myCodecCtx, theFormats);
@@ -103,6 +107,15 @@ int StVideoQueue::getFrameBuffer(AVFrame* theFrame,
             }
             isDone  = true;
         }
+    /*#elif defined(__APPLE__) // standard FFmpeg VideoToolbox wrapper is used - action is not needed
+        if(theFrame->format == stAV::PIX_FMT::VIDEOTOOLBOX_VLD) {
+            if(!myHWAccelCtx.isNull()) {
+                aResult = myHWAccelCtx->getFrameBuffer(*this, theFrame);
+            } else {
+                aResult = -1;
+            }
+            isDone  = true;
+        }*/
     #endif
         if(!isDone) {
             aResult = avcodec_default_get_buffer2(myCodecCtx, theFrame, theFlags);
@@ -133,7 +146,7 @@ int StVideoQueue::getFrameBuffer(AVFrame* theFrame,
     return aResult;
 }
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(__APPLE__)
 bool StVideoQueue::hwaccelInit() { return false; }
 #endif
 
@@ -155,10 +168,10 @@ StVideoQueue::StVideoQueue(const StHandle<StGLTextureQueue>& theTextureQueue,
   myTextureQueue(theTextureQueue),
   myHasDataState(false),
   myMaster(theMaster),
-#if defined(__APPLE__)
-  myCodecH264HW(avcodec_find_decoder_by_name("h264_vda")),
-#elif defined(__ANDROID__)
+#if defined(__ANDROID__)
   myCodecH264HW(avcodec_find_decoder_by_name("h264_mediacodec")),
+  myCodecHevcHW(avcodec_find_decoder_by_name("hevc_mediacodec")),
+  myCodecVp9HW (avcodec_find_decoder_by_name("vp9_mediacodec")),
 #endif
   myCodecOpenJpeg(avcodec_find_decoder_by_name("libopenjpeg")),
   myUseGpu(false),
@@ -186,6 +199,7 @@ StVideoQueue::StVideoQueue(const StHandle<StGLTextureQueue>& theTextureQueue,
   myStFormatByUser(StFormat_AUTO),
   myStFormatByName(StFormat_AUTO),
   myStFormatInStream(StFormat_AUTO),
+  myIsTheaterMode(false),
   myToStickPano360(false),
   myToSwapJps(false) {
 #ifdef ST_USE64PTR
@@ -328,7 +342,10 @@ bool StVideoQueue::init(AVFormatContext*   theFormatCtx,
                  && myCodecAutoId != CodecIdH264
                  && myCodecAutoId != CodecIdVC1
                  && myCodecAutoId != CodecIdWMV3
-                 && myCodecAutoId != CodecIdVC1
+                 && myCodecAutoId != CodecIdHEVC;
+#elif defined(__APPLE__)
+    myIsGpuFailed = myCodecAutoId != CodecIdMPEG2
+                 && myCodecAutoId != CodecIdH264
                  && myCodecAutoId != CodecIdHEVC;
 #endif
 
@@ -340,12 +357,18 @@ bool StVideoQueue::init(AVFormatContext*   theFormatCtx,
     }
 
     // open VIDEO codec
-#if defined(__APPLE__) || defined(__ANDROID__)
+#if defined(__ANDROID__)
     AVCodec* aCodecGpu = NULL;
     if(myUseGpu
-    && StString(myCodecAuto->name).isEquals(stCString("h264"))
     && myCodecCtx->pix_fmt == stAV::PIX_FMT::YUV420P) {
-        aCodecGpu = myCodecH264HW;
+        const StString anAutoCodecName(myCodecAuto->name);
+        if(anAutoCodecName.isEquals(stCString("h264"))) {
+            aCodecGpu = myCodecH264HW;
+        } else if(anAutoCodecName.isEquals(stCString("hevc"))) {
+            aCodecGpu = myCodecHevcHW;
+        } else if(anAutoCodecName.isEquals(stCString("vp9"))) {
+            aCodecGpu = myCodecVp9HW;
+        }
     }
 
     if(aCodecGpu != NULL) {
@@ -425,6 +448,7 @@ bool StVideoQueue::init(AVFormatContext*   theFormatCtx,
                 //spherical->padding
                 break;
             }
+            //case AV_SPHERICAL_MESH: { theNewParams->ViewingMode = StViewSurface_CubemapEAC; break; }
             case AV_SPHERICAL_EQUIRECTANGULAR_TILE: {
                 // unsupported
                 //av_spherical_tile_bounds(aSpherical, par->width, par->height, &l, &t, &r, &b);
@@ -512,11 +536,11 @@ void StVideoQueue::deinit() {
     if(myCodecCtx != NULL) { myCodecCtx->codec_id = myCodecAutoId; }
 #endif
     StAVPacketQueue::deinit();
+    if(!myHWAccelCtx.isNull()) {
+        myHWAccelCtx->decoderDestroy(myCodecCtx);
+    }
     if(myCodecCtx != NULL) {
         myCodecCtx->hwaccel_context = NULL;
-    }
-    if(!myHWAccelCtx.isNull()) {
-        myHWAccelCtx->decoderDestroy();
     }
 }
 
@@ -748,6 +772,11 @@ void StVideoQueue::pushFrame(const StImage&     theSrcDataLeft,
                                              theStParams->Src1SizeX, theStParams->Src1SizeY,
                                              theStParams->Src2SizeX, theStParams->Src2SizeY);
         theStParams->ViewingMode = StStereoParams::getViewSurfaceForPanoramaSource(aPano, true);
+    }
+    if(myIsTheaterMode && theStParams->ViewingMode == StViewSurface_Plain) {
+        theStParams->ViewingMode = StViewSurface_Theater;
+    } else if(!myIsTheaterMode && theStParams->ViewingMode == StViewSurface_Theater) {
+        theStParams->ViewingMode = StViewSurface_Plain;
     }
 
     myTextureQueue->push(theSrcDataLeft, theSrcDataRight, theStParams, theSrcFormat, theCubemapFormat, theSrcPTS);
@@ -1046,7 +1075,13 @@ bool StVideoQueue::decodeFrame(const StHandle<StAVPacket>& thePacket,
     }
     // override source format stored in metadata
     StFormat  aSrcFormat     = myStFormatByUser;
-    StCubemap aCubemapFormat = thePacket->getSource()->ViewingMode == StViewSurface_Cubemap ? StCubemap_Packed : StCubemap_OFF;
+    StCubemap aCubemapFormat = StCubemap_OFF;
+    if(thePacket->getSource()->ViewingMode == StViewSurface_Cubemap) {
+        aCubemapFormat = StCubemap_Packed;
+    } else if(thePacket->getSource()->ViewingMode == StViewSurface_CubemapEAC) {
+        aCubemapFormat = StCubemap_PackedEAC;
+    }
+
     if(aSrcFormat == StFormat_AUTO) {
         // prefer info stored in the stream itself
         aSrcFormat = myStFormatInStream;

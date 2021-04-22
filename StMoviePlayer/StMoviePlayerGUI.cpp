@@ -1,5 +1,5 @@
 /**
- * Copyright © 2009-2019 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2009-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * StMoviePlayer program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -623,6 +623,8 @@ void StMoviePlayerGUI::doDisplayRatioCombo(const size_t ) {
 void StMoviePlayerGUI::fillPanoramaMenu(StGLMenu* theMenu) {
     theMenu->addItem(tr(MENU_VIEW_SURFACE_PLANE),
                      myImage->params.ViewMode, StViewSurface_Plain);
+    theMenu->addItem(tr(MENU_VIEW_SURFACE_THEATER),
+                     myImage->params.ViewMode, StViewSurface_Theater);
     theMenu->addItem(tr(MENU_VIEW_SURFACE_CYLINDER),
                      myImage->params.ViewMode, StViewSurface_Cylinder);
     theMenu->addItem(tr(MENU_VIEW_SURFACE_HEMISPHERE),
@@ -631,6 +633,8 @@ void StMoviePlayerGUI::fillPanoramaMenu(StGLMenu* theMenu) {
                      myImage->params.ViewMode, StViewSurface_Sphere);
     theMenu->addItem(tr(MENU_VIEW_SURFACE_CUBEMAP),
                      myImage->params.ViewMode, StViewSurface_Cubemap);
+    theMenu->addItem(tr(MENU_VIEW_SURFACE_CUBEMAP_EAC),
+                     myImage->params.ViewMode, StViewSurface_CubemapEAC);
     if(myWindow->hasOrientationSensor()) {
         theMenu->addItem(tr(myWindow->isPoorOrientationSensor() ? MENU_VIEW_TRACK_HEAD_POOR : MENU_VIEW_TRACK_HEAD),
                          myPlugin->params.ToTrackHead);
@@ -758,11 +762,26 @@ class ST_LOCAL StDelayControl : public StGLMessageBox {
 
     StDelayControl(StMoviePlayerGUI*               theParent,
                    const StHandle<StFloat32Param>& theTrackedValue)
-    : StGLMessageBox(theParent, theParent->tr(DIALOG_AUDIO_DELAY_TITLE), "", theParent->scale(400), theParent->scale(260)),
+    : StGLMessageBox(theParent),
       myRange(NULL) {
-        changeRectPx().moveX( myRoot->scale( 64));
-        changeRectPx().moveY(-myRoot->scale(128));
+        int aWidth  = stMin(theParent->scale(400), myRoot->getRectPx().width());
+        int aHeight = stMin(theParent->scale(220), myRoot->getRectPx().height());
+        const bool isCompact = myRoot->getRectPx().width()  <= myRoot->scale(450)
+                            || myRoot->getRectPx().height() <= myRoot->scale(450);
+        if(isCompact) {
+            aHeight = stMin(theParent->scale(150), aHeight);
+        } else {
+            changeRectPx().left() = myRoot->scale(64);
+            changeRectPx().top() = -myRoot->scale(128);
+        }
         setCorner(StGLCorner(ST_VCORNER_BOTTOM, ST_HCORNER_LEFT));
+        changeRectPx().right()  = getRectPx().left() + aWidth;
+        changeRectPx().bottom() = getRectPx().top()  + aHeight;
+        create(theParent->tr(DIALOG_AUDIO_DELAY_TITLE), "", aWidth, aHeight);
+        if(isCompact) {
+            myMinSizeY = theParent->scale(150);
+        }
+
         StGLButton* aResetBtn = addButton(theParent->tr(BUTTON_RESET));
         addButton(theParent->tr(BUTTON_CLOSE));
 
@@ -1665,6 +1684,7 @@ StMoviePlayerGUI::StMoviePlayerGUI(StMoviePlayer*  thePlugin,
     myImage->params.DisplayMode->changeValues()[StGLImageRegion::MODE_PARALLEL]   = tr(MENU_VIEW_DISPLAY_MODE_PARALLEL);
     myImage->params.DisplayMode->changeValues()[StGLImageRegion::MODE_CROSSYED]   = tr(MENU_VIEW_DISPLAY_MODE_CROSSYED);
     myImage->params.ToHealAnamorphicRatio->setValue(true);
+    myImage->params.ViewMode->signals.onChanged += stSlot(myPlugin, &StMoviePlayer::doSwitchViewMode);
 
     mySubtitles = new StGLSubtitles  (myImage, theSubQueue,
                                       myPlugin->params.SubtitlesPlace,
@@ -1882,13 +1902,17 @@ void StMoviePlayerGUI::doGesture(const StGestureEvent& theEvent) {
     }
 }
 
-void StMoviePlayerGUI::setVisibility(const StPointD_t& theCursor) {
+void StMoviePlayerGUI::setVisibility(const StPointD_t& theCursor,
+                                     bool theToForceHide,
+                                     bool theToForceShow) {
     const bool toShowAdjust   = myPlugin->params.ToShowAdjustImage->getValue();
     const bool toShowPlayList = myPlugin->params.ToShowPlayList->getValue();
     const bool hasMainMenu    = myPlugin->params.ToShowMenu->getValue()
                              && myMenuRoot != NULL;
     const bool hasUpperPanel  = myPlugin->params.ToShowTopbar->getValue()
                              && myPanelUpper != NULL;
+    const bool hasBottomPanel = myPlugin->params.ToShowBottom->getValue()
+                             && (myPanelBottom != NULL || mySeekBar != NULL);
 
     const int  aRootSizeY     = getRectPx().height();
     const bool hasVideo       = myPlugin->myVideo->hasVideoStream();
@@ -1905,6 +1929,11 @@ void StMoviePlayerGUI::setVisibility(const StPointD_t& theCursor) {
     if(myTapTimer.getElapsedTime() >= 0.5) {
         myVisibilityTimer.restart();
         myTapTimer.stop();
+    }
+    if(theToForceShow) {
+        myVisibilityTimer.restart();
+    } else if(theToForceHide) {
+        myVisibilityTimer.restart(THE_VISIBILITY_IDLE_TIME + 0.001);
     }
     const bool isMouseActive  = myWindow->isMouseMoved();
     const double aStillTime   = myVisibilityTimer.getElapsedTime();
@@ -1929,10 +1958,11 @@ void StMoviePlayerGUI::setVisibility(const StPointD_t& theCursor) {
         || aParams.isNull()
         || aStillTime < THE_VISIBILITY_IDLE_TIME
         || (hasUpperPanel && myPanelUpper->isPointIn(theCursor))
-        || (myPanelBottom != NULL && int(aRootSizeY * theCursor.y()) > (aRootSizeY - 2 * myPanelBottom->getRectPx().height())
-                                  && theCursor.y() < 1.0)
-        || (mySeekBar     != NULL && mySeekBar    ->isPointIn(theCursor))
-        || (myPlayList    != NULL && toShowPlayList && myPlayList->isPointIn(theCursor))
+        || (hasBottomPanel && myPanelBottom != NULL
+         && int(aRootSizeY * theCursor.y()) > (aRootSizeY - 2 * myPanelBottom->getRectPx().height())
+         && theCursor.y() < 1.0)
+        || (hasBottomPanel && mySeekBar != NULL && mySeekBar->isPointIn(theCursor))
+        || (hasBottomPanel && myPlayList != NULL && toShowPlayList && myPlayList->isPointIn(theCursor))
         || (hasMainMenu           && myMenuRoot->isActive());
     if(!myIsVisibleGUI
      && myBtnPlay != NULL
@@ -1941,7 +1971,7 @@ void StMoviePlayerGUI::setVisibility(const StPointD_t& theCursor) {
       || theCursor.y() < 0.0 || theCursor.y() > 1.0)) {
         myIsVisibleGUI = true;
     }
-    const float anOpacity = (float )myVisLerp.perform(myIsVisibleGUI, false);
+    const float anOpacity = (float )myVisLerp.perform(myIsVisibleGUI, theToForceHide || theToForceShow);
     if(isMouseActive) {
         myVisibilityTimer.restart();
     }
@@ -1953,10 +1983,10 @@ void StMoviePlayerGUI::setVisibility(const StPointD_t& theCursor) {
         myPanelUpper->setOpacity(hasUpperPanel ? anOpacity : 0.0f, true);
     }
     if(mySeekBar != NULL) {
-        mySeekBar->setOpacity(anOpacity, false);
+        mySeekBar->setOpacity(hasBottomPanel ? anOpacity : 0.0f, false);
     }
     if(myPanelBottom != NULL) {
-        myPanelBottom->setOpacity(anOpacity, true);
+        myPanelBottom->setOpacity(hasBottomPanel ? anOpacity : 0.0f, true);
     }
 
     if(myAdjustOverlay != NULL
@@ -1974,7 +2004,7 @@ void StMoviePlayerGUI::setVisibility(const StPointD_t& theCursor) {
     }
     if(myPlayList != NULL
     && toShowPlayList) {
-        myPlayList->setOpacity(anOpacity, true);
+        myPlayList->setOpacity(hasBottomPanel ? anOpacity : 0.0f, true);
     }
 
     const StPlayList::CurrentPosition aCurrPos = myPlugin->myPlayList->getCurrentPosition();
@@ -2018,9 +2048,9 @@ void StMoviePlayerGUI::setVisibility(const StPointD_t& theCursor) {
     if(!toShowPano
     &&  hasVideo
     && !aParams.isNull()
-    &&  st::probePanorama(aParams->StereoFormat,
+    /*&&  st::probePanorama(aParams->StereoFormat,
                           aParams->Src1SizeX, aParams->Src1SizeY,
-                          aParams->Src2SizeX, aParams->Src2SizeY) != StPanorama_OFF) {
+                          aParams->Src2SizeX, aParams->Src2SizeY) != StPanorama_OFF*/) {
         toShowPano = true;
     }
     if(myBtnPanorama != NULL) {
@@ -2047,9 +2077,11 @@ void StMoviePlayerGUI::setVisibility(const StPointD_t& theCursor) {
             size_t aTrPano = MENU_VIEW_SURFACE_PLANE;
             switch(aViewMode) {
                 case StViewSurface_Plain:      aTrPano = MENU_VIEW_SURFACE_PLANE;   break;
+                case StViewSurface_Theater:    aTrPano = MENU_VIEW_SURFACE_THEATER; break;
                 case StViewSurface_Sphere:     aTrPano = MENU_VIEW_SURFACE_SPHERE;  break;
                 case StViewSurface_Hemisphere: aTrPano = MENU_VIEW_SURFACE_HEMISPHERE;  break;
                 case StViewSurface_Cubemap:    aTrPano = MENU_VIEW_SURFACE_CUBEMAP;  break;
+                case StViewSurface_CubemapEAC: aTrPano = MENU_VIEW_SURFACE_CUBEMAP_EAC; break;
                 case StViewSurface_Cylinder:   aTrPano = MENU_VIEW_SURFACE_CYLINDER; break;
             }
             myDescr->setText(tr(MENU_VIEW_PANORAMA) + "\n" + tr(aTrPano));
@@ -2139,6 +2171,61 @@ void StMoviePlayerGUI::doAudioStreamsCombo(const size_t ) {
     aBuilder.display();
 }
 
+void StMoviePlayerGUI::doSubtitlesPlacement(const size_t ) {
+    StGLMenu* aMenu  = new StGLMenu(this, 0, 0, StGLMenu::MENU_VERTICAL, true);
+    aMenu->setCorner(StGLCorner(ST_VCORNER_BOTTOM, ST_HCORNER_RIGHT));
+    aMenu->setContextual(true);
+    fillSubtitlesFontSize(aMenu);
+    fillSubtitlesPlacement(aMenu);
+    aMenu->stglInit();
+    setFocus(aMenu);
+}
+
+void StMoviePlayerGUI::fillSubtitlesFontSize(StGLMenu* theMenu) {
+    StGLMenuItem* anItem = theMenu->addItem(tr(MENU_SUBTITLES_SIZE));
+    anItem->setIcon(stCMenuIcon("actionFontSize"), false);
+    anItem->changeMargins().right = scale(100 + 16);
+    StGLRangeFieldFloat32* aRange = new StGLRangeFieldFloat32(anItem, myPlugin->params.SubtitlesSize,
+                                                              -scale(16), 0, StGLCorner(ST_VCORNER_CENTER, ST_HCORNER_RIGHT));
+    aRange->changeRectPx().bottom() = aRange->getRectPx().top() + theMenu->getItemHeight();
+    aRange->setFormat(stCString("%02.0f"));
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Default,  aBlack);
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Positive, aBlack);
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Negative, aBlack);
+}
+
+void StMoviePlayerGUI::fillSubtitlesPlacement(StGLMenu* theMenu) {
+    StGLMenuItem* anItem = theMenu->addItem(tr(MENU_SUBTITLES_TOP), myPlugin->params.SubtitlesPlace, ST_VCORNER_TOP);
+    anItem->changeMargins().right  = scale(100 + 16);
+    StGLRangeFieldFloat32* aRange = new StGLRangeFieldFloat32(anItem, myPlugin->params.SubtitlesTopDY,
+                                                              -scale(16), 0, StGLCorner(ST_VCORNER_CENTER, ST_HCORNER_RIGHT));
+    aRange->changeRectPx().bottom() = aRange->getRectPx().top() + theMenu->getItemHeight();
+    aRange->setFormat(stCString("%+03.0f"));
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Default,  aBlack);
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Positive, aGreen);
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Negative, aRed);
+
+    anItem = theMenu->addItem(tr(MENU_SUBTITLES_BOTTOM), myPlugin->params.SubtitlesPlace, ST_VCORNER_BOTTOM);
+    anItem->changeMargins().right  = scale(100 + 16);
+    aRange = new StGLRangeFieldFloat32(anItem, myPlugin->params.SubtitlesBottomDY,
+                                       -scale(16), 0, StGLCorner(ST_VCORNER_CENTER, ST_HCORNER_RIGHT));
+    aRange->changeRectPx().bottom() = aRange->getRectPx().top() + theMenu->getItemHeight();
+    aRange->setFormat(stCString("%+03.0f"));
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Default,  aBlack);
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Positive, aGreen);
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Negative, aRed);
+
+    anItem = theMenu->addItem(tr(MENU_SUBTITLES_PARALLAX));
+    anItem->changeMargins().right  = scale(100 + 16);
+    aRange = new StGLRangeFieldFloat32(anItem, myPlugin->params.SubtitlesParallax,
+                                       -scale(16), 0, StGLCorner(ST_VCORNER_CENTER, ST_HCORNER_RIGHT));
+    aRange->changeRectPx().bottom() = aRange->getRectPx().top() + theMenu->getItemHeight();
+    aRange->setFormat(stCString("%+03.0f"));
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Default,  aBlack);
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Positive, aBlack);
+    aRange->setColor(StGLRangeFieldFloat32::FieldColor_Negative, aBlack);
+}
+
 void StMoviePlayerGUI::doSubtitlesStreamsCombo(const size_t ) {
     const StHandle< StArrayList<StString> >& aStreams = myPlugin->myVideo->params.activeSubtitles->getList();
     const bool hasAudioStream = myPlugin->myVideo->hasAudioStream();
@@ -2163,53 +2250,16 @@ void StMoviePlayerGUI::doSubtitlesStreamsCombo(const size_t ) {
     }
 
     if(!aStreams.isNull()
-    && !aStreams->isEmpty()
-    && !myWindow->isMobile()) {
+    && !aStreams->isEmpty()) {
         //myMenuSubtitles->addSplitter();
-        StGLMenuItem* anItem = aBuilder.getMenu()->addItem(tr(MENU_SUBTITLES_SIZE));
-        anItem->setIcon(stCMenuIcon("actionFontSize"), false);
-        anItem->changeMargins().right = scale(100 + 16);
-        StGLRangeFieldFloat32* aRange = new StGLRangeFieldFloat32(anItem, myPlugin->params.SubtitlesSize,
-                                                                 -scale(16), 0, StGLCorner(ST_VCORNER_CENTER, ST_HCORNER_RIGHT));
-        aRange->changeRectPx().bottom() = aRange->getRectPx().top() + aBuilder.getMenu()->getItemHeight();
-        aRange->setFormat(stCString("%02.0f"));
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Default,  aBlack);
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Positive, aBlack);
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Negative, aBlack);
+        if(!myWindow->isMobile()) {
+            fillSubtitlesFontSize(aBuilder.getMenu());
+        }
 
         StGLMenu* aPlaceMenu = new StGLMenu(this, 0, 0, StGLMenu::MENU_VERTICAL);
-
-        anItem = aPlaceMenu->addItem(tr(MENU_SUBTITLES_TOP), myPlugin->params.SubtitlesPlace, ST_VCORNER_TOP);
-        anItem->changeMargins().right  = scale(100 + 16);
-        aRange = new StGLRangeFieldFloat32(anItem, myPlugin->params.SubtitlesTopDY,
-                                          -scale(16), 0, StGLCorner(ST_VCORNER_CENTER, ST_HCORNER_RIGHT));
-        aRange->changeRectPx().bottom() = aRange->getRectPx().top() + aBuilder.getMenu()->getItemHeight();
-        aRange->setFormat(stCString("%+03.0f"));
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Default,  aBlack);
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Positive, aGreen);
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Negative, aRed);
-
-        anItem = aPlaceMenu->addItem(tr(MENU_SUBTITLES_BOTTOM), myPlugin->params.SubtitlesPlace, ST_VCORNER_BOTTOM);
-        anItem->changeMargins().right  = scale(100 + 16);
-        aRange = new StGLRangeFieldFloat32(anItem, myPlugin->params.SubtitlesBottomDY,
-                                          -scale(16), 0, StGLCorner(ST_VCORNER_CENTER, ST_HCORNER_RIGHT));
-        aRange->changeRectPx().bottom() = aRange->getRectPx().top() + aBuilder.getMenu()->getItemHeight();
-        aRange->setFormat(stCString("%+03.0f"));
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Default,  aBlack);
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Positive, aGreen);
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Negative, aRed);
-
-        anItem = aPlaceMenu->addItem(tr(MENU_SUBTITLES_PARALLAX));
-        anItem->changeMargins().right  = scale(100 + 16);
-        aRange = new StGLRangeFieldFloat32(anItem, myPlugin->params.SubtitlesParallax,
-                                          -scale(16), 0, StGLCorner(ST_VCORNER_CENTER, ST_HCORNER_RIGHT));
-        aRange->changeRectPx().bottom() = aRange->getRectPx().top() + aBuilder.getMenu()->getItemHeight();
-        aRange->setFormat(stCString("%+03.0f"));
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Default,  aBlack);
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Positive, aBlack);
-        aRange->setColor(StGLRangeFieldFloat32::FieldColor_Negative, aBlack);
-
-        anItem = aBuilder.getMenu()->addItem(tr(MENU_SUBTITLES_PLACEMENT), aPlaceMenu);
+        fillSubtitlesPlacement(aPlaceMenu);
+        aBuilder.getMenu()->addItem(tr(MENU_SUBTITLES_PLACEMENT), aPlaceMenu)
+                          ->signals.onItemClick.connect(this, &StMoviePlayerGUI::doSubtitlesPlacement);
     }
 
     if(!aStreams.isNull()

@@ -1,5 +1,5 @@
 /**
- * Copyright © 2009-2019 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2009-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * StImageViewer program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -101,6 +101,8 @@ namespace StImageViewerStrings {
         MENU_VIEW_STICK_PANORAMA360 = 1288,
         MENU_VIEW_FLIPZ_CUBE6x1     = 1291,
         MENU_VIEW_FLIPZ_CUBE3x2     = 1292,
+        MENU_VIEW_SURFACE_CUBEMAP_EAC = 1293,
+        MENU_VIEW_SURFACE_THEATER   = 1294,
 
         // Root -> Output -> Change Device menu
         MENU_CHANGE_DEVICE  = 1400,

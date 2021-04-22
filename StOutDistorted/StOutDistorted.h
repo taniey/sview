@@ -1,6 +1,6 @@
 /**
  * StOutDistorted, class providing stereoscopic output in anamorph side by side format using StCore toolkit.
- * Copyright © 2013-2017 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2013-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * Distributed under the Boost Software License, Version 1.0.
  * See accompanying file license-boost.txt or copy at
@@ -27,10 +27,6 @@ namespace vr {
     class IVRSystem;
     struct TrackedDevicePose_t;
 }
-
-typedef struct ovrHmdStruct* ovrSession;
-typedef union ovrGLTexture_s ovrGLTexture;
-typedef struct ovrSwapTextureSet_ ovrSwapTextureSet;
 
 /**
  * This class implements stereoscopic rendering on displays
@@ -131,6 +127,11 @@ class StOutDistorted : public StWindow {
     ST_CPPEXPORT virtual void stglDraw() ST_ATTR_OVERRIDE;
 
     /**
+    * Get viewport for specified subwindow.
+    */
+    ST_CPPEXPORT virtual StGLBoxPx stglViewport(const int theWinEnum) const ST_ATTR_OVERRIDE;
+
+    /**
      * Show/Hide mouse cursor.
      * @param theToShow true to show cursor
      */
@@ -155,6 +156,11 @@ class StOutDistorted : public StWindow {
      * Get head orientation.
      */
     ST_CPPEXPORT virtual StQuaternion<double> getDeviceOrientation() const ST_ATTR_OVERRIDE;
+
+    /**
+     * Return custom stereo projection frustums.
+     */
+    ST_CPPEXPORT virtual bool getCustomProjection(StRectF_t& theLeft, StRectF_t& theRight) const ST_ATTR_OVERRIDE;
 
     /**
      * Return margins for working area.
@@ -218,6 +224,11 @@ class StOutDistorted : public StWindow {
         return myIsStereoOn
             && myDevice == DEVICE_HMD;
     }
+
+    /**
+     * Retrieve active head position.
+     */
+    ST_LOCAL void updateVRProjectionFrustums();
 
         private:
 
@@ -292,9 +303,13 @@ class StOutDistorted : public StWindow {
     double                    myVrMarginsBottom;
     double                    myVrMarginsLeft;
     double                    myVrMarginsRight;
-    int                       myVrRendSizeX;     //!< FBO width  for rendering into VR (can be greater then actual HMD resolution to compensate distortion)
-    int                       myVrRendSizeY;     //!< FBO height for rendering into VR
-    float                     myVrFrequency;     //!< HMD frequency
+    StRectF_t                 myVrFrustumL;      //!< projection frustum for the left eye
+    StRectF_t                 myVrFrustumR;      //!< projection frustum for the right eye
+    StVec2<int>               myVrRendSize;      //!< FBO width x height for rendering into VR (can be greater then actual HMD resolution to compensate distortion)
+    float                     myVrFrequency;     //!< display frequency
+    float                     myVrAspectRatio;   //!< aspect ratio
+    float                     myVrFieldOfView;   //!< field of view
+    float                     myVrIOD;           //!< intra-ocular distance in meters
     bool                      myVrTrackOrient;   //!< track orientation flag
     bool                      myVrToDrawMsg;
     StHandle<StGLTextureQuad> myVrFullscreenMsg;
@@ -302,12 +317,6 @@ class StOutDistorted : public StWindow {
 #ifdef ST_HAVE_OPENVR
     vr::IVRSystem*            myVrHmd;           //!< OpenVR session object
     vr::TrackedDevicePose_t*  myVrTrackedPoses;  //!< array of tracked devices poses
-#elif defined(ST_HAVE_LIBOVR)
-    ovrSession                myVrHmd;
-    ovrSwapTextureSet*        myOvrSwapTexture;
-    GLuint                    myOvrSwapFbo[2];
-    ovrGLTexture*             myOvrMirrorTexture;
-    GLuint                    myOvrMirrorFbo;
 #endif
 
     bool                      myToShowCursor;    //!< cursor visibility flag

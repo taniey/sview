@@ -52,6 +52,11 @@ public:
      */
     ST_CPPEXPORT double perform(bool theDirUp, bool theToForce);
 
+    /**
+     * Return value within 0.0 - 1.0 range.
+     */
+    double getValue() const { return myValue; }
+
 private:
 
     double  myValue;    //!< value within 0.0 - 1.0 range
@@ -220,7 +225,12 @@ class StGLWidget {
     /**
      * @param theScissorRect rectangle for OpenGL scissor test
      */
-    ST_CPPEXPORT void stglScissorRect(StGLBoxPx& theScissorRect) const;
+    ST_CPPEXPORT void stglScissorRect2d(StGLBoxPx& theScissorRect) const;
+
+    /**
+    * @param theScissorRect rectangle for OpenGL scissor test
+    */
+    ST_CPPEXPORT void stglScissorRect3d(StGLBoxPx& theScissorRect) const;
 
     /**
      * @param thePointZo point in Zero2One coordinates to convert

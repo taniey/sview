@@ -1,5 +1,5 @@
 /**
- * Copyright © 2009-2019 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2009-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * Distributed under the Boost Software License, Version 1.0.
  * See accompanying file license-boost.txt or copy at
@@ -175,6 +175,10 @@ class StGLTextureData {
                               const StImagePlane& theData);
 
     ST_LOCAL void setupAttributes(StGLFrameTextures& stFrameTextures, const StImage& theImage);
+
+    ST_LOCAL void setupDataRectangle(const StImagePlane& theImagePlane,
+                                     const GLfloat       thePixelRatio,
+                                     StGLFrameTexture&   theTextureFrame);
 
         private:
 

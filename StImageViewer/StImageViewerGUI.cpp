@@ -1,5 +1,5 @@
 /**
- * Copyright © 2009-2019 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2009-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * StImageViewer program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -394,6 +394,8 @@ StGLMenu* StImageViewerGUI::createDisplayRatioMenu() {
 void StImageViewerGUI::fillPanoramaMenu(StGLMenu* theMenu) {
     theMenu->addItem(tr(MENU_VIEW_SURFACE_PLANE),
                      myImage->params.ViewMode, StViewSurface_Plain);
+    theMenu->addItem(tr(MENU_VIEW_SURFACE_THEATER),
+                     myImage->params.ViewMode, StViewSurface_Theater);
     theMenu->addItem(tr(MENU_VIEW_SURFACE_CYLINDER),
                      myImage->params.ViewMode, StViewSurface_Cylinder);
     theMenu->addItem(tr(MENU_VIEW_SURFACE_HEMISPHERE),
@@ -402,6 +404,8 @@ void StImageViewerGUI::fillPanoramaMenu(StGLMenu* theMenu) {
                      myImage->params.ViewMode, StViewSurface_Sphere);
     theMenu->addItem(tr(MENU_VIEW_SURFACE_CUBEMAP),
                      myImage->params.ViewMode, StViewSurface_Cubemap);
+    theMenu->addItem(tr(MENU_VIEW_SURFACE_CUBEMAP_EAC),
+                     myImage->params.ViewMode, StViewSurface_CubemapEAC);
     if(myWindow->hasOrientationSensor()) {
         theMenu->addItem(tr(myWindow->isPoorOrientationSensor() ? MENU_VIEW_TRACK_HEAD_POOR : MENU_VIEW_TRACK_HEAD),
                          myPlugin->params.ToTrackHead);
@@ -1364,7 +1368,8 @@ void StImageViewerGUI::doGesture(const StGestureEvent& theEvent) {
 }
 
 void StImageViewerGUI::setVisibility(const StPointD_t& theCursor,
-                                     bool              toForceHide) {
+                                     bool theToForceHide,
+                                     bool theToForceShow) {
     const bool toShowAdjust   = myPlugin->params.ToShowAdjustImage->getValue();
     const bool toShowPlayList = myPlugin->params.ToShowPlayList->getValue();
     const bool hasMainMenu    =  myPlugin->params.ToShowMenu->getValue()
@@ -1373,6 +1378,7 @@ void StImageViewerGUI::setVisibility(const StPointD_t& theCursor,
                              &&  myPlugin->params.ToShowTopbar->getValue()
                              &&  myPanelUpper  != NULL;
     const bool hasBottomPanel = !myIsMinimalGUI
+                             &&  myPlugin->params.ToShowBottom->getValue()
                              &&  myPanelBottom != NULL;
 
     StHandle<StStereoParams> aParams = myImage->getSource();
@@ -1389,6 +1395,9 @@ void StImageViewerGUI::setVisibility(const StPointD_t& theCursor,
     if(myTapTimer.getElapsedTime() >= 0.5) {
         myVisibilityTimer.restart();
         myTapTimer.stop();
+    }
+    if(theToForceShow) {
+        myVisibilityTimer.restart();
     }
     const bool isMouseActive  = myWindow->isMouseMoved();
 
@@ -1413,8 +1422,8 @@ void StImageViewerGUI::setVisibility(const StPointD_t& theCursor,
     if(isMouseActive) {
         myVisibilityTimer.restart();
     }
-    const bool  toShowAll = !myIsMinimalGUI && myIsVisibleGUI && !toForceHide;
-    const float anOpacity = (float )myVisLerp.perform(toShowAll, toForceHide);
+    const bool  toShowAll = !myIsMinimalGUI && myIsVisibleGUI && !theToForceHide;
+    const float anOpacity = (float )myVisLerp.perform(toShowAll, theToForceHide || theToForceShow);
 
     if(myMenuRoot != NULL) {
         myMenuRoot->setOpacity(hasMainMenu ? anOpacity : 0.0f, true);
@@ -1440,7 +1449,7 @@ void StImageViewerGUI::setVisibility(const StPointD_t& theCursor,
     }
     if(myPlayList != NULL
     && toShowPlayList) {
-        myPlayList->setOpacity(anOpacity, true);
+        myPlayList->setOpacity(myPlugin->params.ToShowBottom->getValue() ? anOpacity : 0.0f, true);
     }
     if(myBtnFull != NULL) {
         if(myIsMinimalGUI
@@ -1479,9 +1488,9 @@ void StImageViewerGUI::setVisibility(const StPointD_t& theCursor,
     bool toShowPano = aViewMode != StViewSurface_Plain;
     if(!toShowPano
     && !aParams.isNull()
-    &&  st::probePanorama(aParams->StereoFormat,
+    /*&&  st::probePanorama(aParams->StereoFormat,
                           aParams->Src1SizeX, aParams->Src1SizeY,
-                          aParams->Src2SizeX, aParams->Src2SizeY) != StPanorama_OFF) {
+                          aParams->Src2SizeX, aParams->Src2SizeY) != StPanorama_OFF*/) {
         toShowPano = true;
     }
     if(myBtnPanorama != NULL) {
@@ -1518,9 +1527,11 @@ void StImageViewerGUI::setVisibility(const StPointD_t& theCursor,
             size_t aTrPano = MENU_VIEW_SURFACE_PLANE;
             switch(aViewMode) {
                 case StViewSurface_Plain:      aTrPano = MENU_VIEW_SURFACE_PLANE;   break;
+                case StViewSurface_Theater:    aTrPano = MENU_VIEW_SURFACE_THEATER; break;
                 case StViewSurface_Sphere:     aTrPano = MENU_VIEW_SURFACE_SPHERE;  break;
                 case StViewSurface_Hemisphere: aTrPano = MENU_VIEW_SURFACE_HEMISPHERE; break;
                 case StViewSurface_Cubemap:    aTrPano = MENU_VIEW_SURFACE_CUBEMAP;  break;
+                case StViewSurface_CubemapEAC: aTrPano = MENU_VIEW_SURFACE_CUBEMAP_EAC; break;
                 case StViewSurface_Cylinder:   aTrPano = MENU_VIEW_SURFACE_CYLINDER; break;
             }
             myDescr->setText(tr(MENU_VIEW_PANORAMA) + "\n" + tr(aTrPano));

@@ -1,5 +1,5 @@
 /**
- * Copyright © 2013-2019 Kirill Gavrilov <kirill@sview.ru>
+ * Copyright © 2013-2020 Kirill Gavrilov <kirill@sview.ru>
  *
  * StMoviePlayer program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -193,6 +193,10 @@ void loadDefaults(StLangMap& theStrings) {
                "Cylinder");
     theStrings(MENU_VIEW_SURFACE_CUBEMAP,
                "Cubemap");
+    theStrings(MENU_VIEW_SURFACE_THEATER,
+               "Theater");
+    theStrings(MENU_VIEW_SURFACE_CUBEMAP_EAC,
+               "Equiangular cubemap");
     theStrings(MENU_VIEW_TRACK_HEAD,
                "Track orientation");
     theStrings(MENU_VIEW_TRACK_HEAD_POOR,
@@ -657,6 +661,9 @@ void loadDefaults(StLangMap& theStrings) {
     addAction(theStrings, StMoviePlayer::Action_PanoramaOnOff,
               "DoPanoramaOnOff",
               "Enable/disable panorama mode");
+    addAction(theStrings, StMoviePlayer::Action_ShowGUI,
+              "DoShowGUI",
+              "Show/hide GUI");
 
     theStrings.addAlias("DoOutStereoNormal",       MENU_VIEW_DISPLAY_MODE_STEREO);
     theStrings.addAlias("DoOutStereoLeftView",     MENU_VIEW_DISPLAY_MODE_LEFT);

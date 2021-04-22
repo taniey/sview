@@ -18,6 +18,7 @@ namespace {
 StGLProjCamera::StGLProjCamera()
 : myMatrix(),
   myMatrixMono(),
+  myIsCustomFrust(false),
   myFOVy(45.0f),
   myZoom(1.0f),
   myAspect(1.0f),
@@ -41,6 +42,7 @@ StGLProjCamera::StGLProjCamera(const GLfloat theFOVy,
                                const GLfloat theZScreen)
 : myMatrix(),
   myMatrixMono(),
+  myIsCustomFrust(false),
   myFOVy(theFOVy),
   myZoom(1.0f),
   myAspect(1.0f),
@@ -55,6 +57,56 @@ StGLProjCamera::StGLProjCamera(const GLfloat theFOVy,
     myFrust = &myFrustM;
     myFrustM.zNear = myFrustL.zNear = myFrustR.zNear = theZNear;
     myFrustM.zFar  = myFrustL.zFar  = myFrustR.zFar  = theZFar;
+    updateFrustum();
+}
+
+StGLProjCamera::StGLProjCamera(const StGLProjCamera& theOther)
+: myMatrix(theOther.myMatrix),
+  myMatrixMono(theOther.myMatrixMono),
+  myVrFrustumL(theOther.myVrFrustumL),
+  myVrFrustumR(theOther.myVrFrustumR),
+  myIsCustomFrust(theOther.myIsCustomFrust),
+  myFOVy(theOther.myFOVy),
+  myZoom(theOther.myZoom),
+  myAspect(theOther.myAspect),
+  myZScreen(theOther.myZScreen),
+  myIOD(theOther.myIOD),
+  myFrustL(theOther.myFrustL),
+  myFrustR(theOther.myFrustR),
+  myFrustM(theOther.myFrustM),
+  myFrust(NULL),
+  myIsPersp(theOther.myIsPersp) {
+    myFrust = &myFrustM;
+    if(theOther.myFrust == &theOther.myFrustL) {
+        myFrust = &myFrustL;
+    } else if(theOther.myFrust == &theOther.myFrustR) {
+        myFrust = &myFrustR;
+    }
+    updateFrustum();
+}
+
+void StGLProjCamera::copyFrom(const StGLProjCamera& theOther) {
+    myMatrix = theOther.myMatrix;
+    myMatrixMono = theOther.myMatrixMono;
+    myVrFrustumL = theOther.myVrFrustumL;
+    myVrFrustumR = theOther.myVrFrustumR;
+    myIsCustomFrust = theOther.myIsCustomFrust;
+    myFOVy = theOther.myFOVy;
+    myZoom = theOther.myZoom;
+    myAspect = theOther.myAspect;
+    myZScreen = theOther.myZScreen;
+    myIOD = theOther.myIOD;
+    myFrustL = theOther.myFrustL;
+    myFrustR = theOther.myFrustR;
+    myFrustM = theOther.myFrustM;
+    myIsPersp = theOther.myIsPersp;
+
+    myFrust = &myFrustM;
+    if(theOther.myFrust == &theOther.myFrustL) {
+        myFrust = &myFrustL;
+    } else if(theOther.myFrust == &theOther.myFrustR) {
+        myFrust = &myFrustR;
+    }
     updateFrustum();
 }
 
@@ -94,14 +146,35 @@ GLfloat StGLProjCamera::getFOVyZoomed() const {
     return std::atan2(aDYHalf, myFrustM.zNear * myZoom);
 }
 
+void StGLProjCamera::resetCustomProjection() {
+    myVrFrustumL = StRectF_t();
+    myVrFrustumR = StRectF_t();
+    myIsCustomFrust = false;
+    updateFrustum();
+}
+
+void StGLProjCamera::setCustomProjection(const StRectF_t& theLeft, const StRectF_t& theRight) {
+    myVrFrustumL = theLeft;
+    myVrFrustumR = theRight;
+    myIsCustomFrust = true;
+    updateFrustum();
+}
+
 void StGLProjCamera::updateFrustum() {
     // sets top of frustum based on FOVy and near clipping plane
+    const GLfloat aZNear = myFrustM.zNear;
+    GLfloat aDXStereoShift = (0.5f * myIOD) * aZNear / myZScreen;
+
     GLfloat aDYHalf = myIsPersp
-                    ? (myZoom * myFrustM.zNear * std::tan(ST_DTR_HALF * myFOVy))
-                    : (myZoom * myFrustM.zNear); ///
-    // sets right of frustum based on aspect ratio
+                    ? (myZoom * aZNear * std::tan(ST_DTR_HALF * myFOVy))
+                    : (myZoom * aZNear);
     GLfloat aDXHalf = myAspect * aDYHalf;
-    GLfloat aDXStereoShift = (0.5f * myIOD) * myFrustM.zNear / myZScreen;
+    /*GLfloat aDXHalf = aDYHalf;
+    if(myAspect > 1.0f) {
+        aDXHalf *= myAspect;
+    } else {
+        aDYHalf /= myAspect;
+    }*/
 
     // frustum for left view
     myFrustL.yTop    =  aDYHalf;
@@ -121,6 +194,19 @@ void StGLProjCamera::updateFrustum() {
     myFrustM.xLeft   = -aDXHalf;
     myFrustM.xRight  =  aDXHalf;
     myFrustM.xTranslation = 0.0f;
+
+    if(myIsCustomFrust) {
+        myFrustL.yTop    = aZNear * myVrFrustumL.top();
+        myFrustL.yBottom = aZNear * myVrFrustumL.bottom();
+        myFrustL.xLeft   = aZNear * myVrFrustumL.left();
+        myFrustL.xRight  = aZNear * myVrFrustumL.right();
+
+        myFrustR.yTop    = aZNear * myVrFrustumR.top();
+        myFrustR.yBottom = aZNear * myVrFrustumR.bottom();
+        myFrustR.xLeft   = aZNear * myVrFrustumR.left();
+        myFrustR.xRight  = aZNear * myVrFrustumR.right();
+        myFrustL.xTranslation = myFrustR.xTranslation = 0.0f;
+    }
 
     // update current matrix
     setupMatrix();
