@@ -573,12 +573,29 @@ template<typename Type> inline
 bool StConstStringUnicode<Type>::isStartsWith(const StConstStringUnicode<Type>& theStartString) const {
     if(this->Size < theStartString.Size) {
         return false;
-    } else if(this == &theStartString) {
-        return true;
+    } else if(this->String == theStartString.String) {
+        return true; // self-comparison
     }
     return stStrAreEqual((const char* )this->String,          theStartString.Size,
                          (const char* )theStartString.String, theStartString.Size);
 }
+
+template<typename Type> inline
+bool StConstStringUnicode<Type>::isStartsWith(const StConstStringUnicode<Type>& theStartString, const StUtfIterator<Type>& theFrom) const {
+    if (*theFrom == 0) {
+        return false;
+    }
+    const size_t aSize = theStartString.Size - (theFrom.getBufferHere() - this->String);
+
+    if (aSize < theStartString.Size) {
+        return false;
+    } else if(theFrom.getBufferHere() == theStartString.String) {
+        return true; // self-comparison
+    }
+    return stStrAreEqual((const char* )theFrom.getBufferHere(), theStartString.Size,
+                         (const char* )theStartString.String,   theStartString.Size);
+}
+
 
 template<typename Type> inline
 bool StStringUnicode<Type>::isStartsWithIgnoreCase(const StConstStringUnicode<Type>& theStartString) const {
@@ -637,28 +654,33 @@ StHandle <StArrayList< StStringUnicode<Type> > > StStringUnicode<Type>::split(co
 }
 
 template<typename Type> inline
-bool StConstStringUnicode<Type>::isContains(const stUtf32_t theSubChar) const {
-    for(StUtfIterator<Type> anIter(this->String); *anIter != 0; ++anIter) {
-        if(stUtf32_t(*anIter) == theSubChar) {
-            return true;
+StUtfIterator<Type> StConstStringUnicode<Type>::findFrom(const stUtf32_t theSubChar, const StUtfIterator<Type>& theFrom) const {
+    for (StUtfIterator<Type> anIter = theFrom; *anIter != 0; ++anIter) {
+        if (stUtf32_t(*anIter) == theSubChar) {
+            return anIter;
         }
     }
-    return false;
+    return StUtfIterator<Type>(nullptr);
 }
 
 template<typename Type> inline
-bool StConstStringUnicode<Type>::isContains(const StConstStringUnicode<Type>& theSubString) const {
-    if(theSubString.isEmpty()) {
-        return true;
+StUtfIterator<Type> StConstStringUnicode<Type>::findFrom(const StConstStringUnicode<Type>& theSubString, const StUtfIterator<Type>& theFrom) const {
+    if (theSubString.isEmpty()) {
+        return StUtfIterator<Type>(nullptr);
     }
-    StUtfIterator<Type> anIterMe(this->String);
+
+    StUtfIterator<Type> anIterMe = theFrom;
     StUtfIterator<Type> anIterSub(theSubString.String);
-    for(;; ++anIterMe) {
-        if(*anIterMe == 0) {
-            return *anIterSub == 0;
-        } else if(*anIterSub == 0) {
-            return true;
-        } else if(*anIterMe == *anIterSub) {
+    StUtfIterator<Type> aStartMe(nullptr);
+    for (;; ++anIterMe) {
+        if (*anIterSub == 0) {
+            return aStartMe;
+        } else if (*anIterMe == 0) {
+            return StUtfIterator<Type>(nullptr);
+        } else if (*anIterMe == *anIterSub) {
+            if (anIterSub.getIndex() == 0) {
+                aStartMe = anIterMe;
+            }
             ++anIterSub;
         } else {
             anIterSub.init(theSubString.String);
